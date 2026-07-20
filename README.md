@@ -1,6 +1,11 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/thetime1102/super-agent-plugin/main/assets/logo.png" alt="Super Agent" width="120" />
+  <a href="https://nhatvicake.com/">
+    <img src="https://raw.githubusercontent.com/thetime1102/super-agent-plugin/main/assets/logo.png" alt="NHAT VI CAKE" width="200" />
+  </a>
   <h1 align="center">Super Agent Plugin for OpenClaw</h1>
+  <p align="center">
+    <em>Powered by <a href="https://nhatvicake.com/">NHAT VI CAKE</a> 🍰</em>
+  </p>
   <p align="center">
     <strong>Tree-sitter Repo Mapper + Code Symbol Tool + Context Engine</strong>
     <br />
