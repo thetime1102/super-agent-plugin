@@ -1,4 +1,4 @@
-/**
+﻿/**
  * repo-mapper.ts — Core Repo Mapper module
  * 
  * Tree-sitter based TypeScript file analyzer.
@@ -356,16 +356,31 @@ export async function readCodeSymbol(filePath: string, symbolName: string): Prom
 /**
  * Quét user message tìm patterns giống file path
  * VD: "src/services/llm.service.ts" hoặc "llm.service.ts"
+ * Bug #6 fix: thêm common Next.js path prefixes
+ * Bug #8 fix: hỗ trợ cả forward-slash và backslash (Windows)
  */
 export function detectFileReferences(text: string): string[] {
-  // Pattern 1: src/path/file.ts (relative source paths)
-  const pathPattern = /(?:src|web|data|dist|public)\/[a-zA-Z0-9_\-/.]+\.(ts|tsx|js|jsx|css|json|sql)/g;
-  const pathMatches = [...text.matchAll(pathPattern)].map(m => m[0].trim());
+  const results: string[] = [];
 
-  // Pattern 2: "file.ts" named with extension (quoted or bare)
-  const filePattern = /["'`]?([a-zA-Z0-9_\-]+\.(ts|tsx|js|jsx|css|json))["'`]?/g;
-  const fileMatches = [...text.matchAll(filePattern)].map(m => m[1].trim());
+  const PREFIXES = 'src|app|lib|components|hooks|utils|config|types|pages|web|data|dist|public';
+  const EXT = '(tsx|ts|jsx|json|js|css|sql)';
+  const EXT_BARE = '(tsx|ts|jsx|json|js|css)';
 
-  // Deduplicate
-  return [...new Set([...pathMatches, ...fileMatches])];
+  // Pattern 1: relative source paths (forward slash)
+  const pat1 = new RegExp('(?:' + PREFIXES + ')[/\\\\][a-zA-Z0-9_\\\-/.]+\.' + EXT, 'g');
+  results.push(...[...text.matchAll(pat1)].map(m => m[0].trim()));
+
+  // Pattern 2: @/ alias paths
+  const pat2 = /@\/[a-zA-Z0-9_\-/]+\.(tsx|ts|jsx|json|js|css|sql)/g;
+  results.push(...[...text.matchAll(pat2)].map(m => m[0].trim()));
+
+  // Pattern 3: bare filename (quoted or bare)
+  const pat3 = new RegExp('[\"\\\'`]?([a-zA-Z0-9_\\\-]+\.' + EXT_BARE + ')[\"\\\'`]?', 'g');
+  results.push(...[...text.matchAll(pat3)].map(m => m[1].trim()));
+
+  // Pattern 4: Windows backslash paths
+  const pat4 = new RegExp('(?:' + PREFIXES + ')\\\\[a-zA-Z0-9_\\\-/.]+\.' + EXT, 'g');
+  results.push(...[...text.matchAll(pat4)].map(m => m[0].trim().replace(/\\/g, '/')));
+
+  return [...new Set(results.filter(Boolean))];
 }

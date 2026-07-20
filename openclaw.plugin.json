@@ -11,7 +11,12 @@
   },
   "configSchema": {
     "type": "object",
-    "properties": {},
+    "properties": {
+      "projectRoot": {
+        "type": "string",
+        "description": "Absolute path to the project root (e.g., C:/projects/my-app). Auto-detected if empty."
+      }
+    },
     "additionalProperties": false
   }
 }

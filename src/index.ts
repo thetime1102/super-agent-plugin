@@ -8,8 +8,44 @@
 
 import { definePluginEntry } from 'openclaw/plugin-sdk/plugin-entry';
 import { Type } from 'typebox';
-import { join, sep } from 'node:path';
+import { join, sep, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
 import { mapFile, readCodeSymbol, detectFileReferences } from './repo-mapper.js';
+
+/**
+ * Resolve project root từ config hoặc auto-detect.
+ * Bug #5 fix: không dùng process.cwd() trực tiếp mà scan subdirectories.
+ * Bug #7 fix: đọc từ api.pluginConfig.projectRoot.
+ */
+function resolveProjectRoot(cfgRoot?: string): string {
+  if (cfgRoot && existsSync(cfgRoot)) return cfgRoot;
+
+  const cwd = process.cwd();
+
+  // If CWD itself is a project root, use it
+  if (existsSync(join(cwd, 'package.json')) || existsSync(join(cwd, 'src'))) {
+    return cwd;
+  }
+
+  // Scan common project directories
+  const candidates = [
+    // NHAT VI CAKE projects
+    join(cwd, 'nhatvi-ecosystem-dev'),
+    join(cwd, 'nhatvi-ecosystem'),
+    // Generic Next.js / Node.js projects
+    join(cwd, 'src'),
+    join(cwd, 'app'),
+    join(cwd, 'web'),
+  ];
+
+  for (const dir of candidates) {
+    if (existsSync(dir) && (existsSync(join(dir, 'package.json')) || existsSync(join(dir, 'src')))) {
+      return dir;
+    }
+  }
+
+  return cwd;
+}
 
 const entry: any = definePluginEntry({
   id: 'super-agent',
@@ -17,6 +53,10 @@ const entry: any = definePluginEntry({
   description: 'Tree-sitter Repo Mapper + Code Symbol Tool + Context Engine',
 
   register(api) {
+    // Đọc plugin config (Bug #7 fix)
+    const pluginCfg = (api as any).pluginConfig || {};
+    const projectRoot = resolveProjectRoot(pluginCfg.projectRoot as string | undefined);
+
     // TOOL: read_code_symbol
     api.registerTool({
       name: 'read_code_symbol',
@@ -29,8 +69,10 @@ const entry: any = definePluginEntry({
       async execute(_id: string, params: unknown) {
         const { filePath, symbolName } = params as any;
         try {
-          const rootDir = process.env.INIT_CWD || process.cwd();
-          const fullPath = filePath.startsWith('/') ? filePath : join(rootDir, filePath.replace(/\//g, sep));
+          const rootDir = projectRoot;
+          // Bug #8 fix: hỗ trợ cả forward-slash và backslash
+          const normalized = filePath.replace(/[\\/]/g, '/');
+          const fullPath = normalized.startsWith('/') ? normalized : join(rootDir, normalized);
           const result = await readCodeSymbol(fullPath, symbolName);
           if (!result) {
             return { content: [{ type: 'text', text: `❌ Symbol "${symbolName}" không tìm thấy trong "${filePath}".` }], details: {} };
@@ -73,12 +115,14 @@ const entry: any = definePluginEntry({
         const files = detectFileReferences(lastUserMsg.content);
         if (files.length === 0) return { messages, estimatedTokens: 0 };
 
-        const rootDir = process.env.INIT_CWD || process.cwd();
+        const rootDir = projectRoot;
         const additions: string[] = [];
 
         for (const fileRef of files.slice(0, 1)) {
           try {
-            const fullPath = fileRef.startsWith('/') ? fileRef : join(rootDir, fileRef.replace(/\//g, sep));
+            // Bug #8 fix: normalize backslash paths
+            const normalized = fileRef.replace(/[\\/]/g, '/');
+            const fullPath = normalized.startsWith('/') ? normalized : join(rootDir, normalized);
             const fileMap = await mapFile(fullPath, rootDir);
             const lines: string[] = [
               `📋 FILE MAP: ${fileMap.file}`,
