@@ -33,6 +33,10 @@ SUPER_AGENT_DIR = os.path.join(WORKSPACE, "super-agent-plugin")
 GRAPHIFY_OUT = os.path.join(DEV_DIR, "graphify-out", "graph.json")
 REPORT_FILE = os.path.join(WORKSPACE, "memory", ".scan_report.json")
 
+# --- Safety Guards ---
+MAX_TRACE_DEPTH = 3
+MAX_CONTEXT_TOKENS = 8000  # Neu vuot qua, chi lay function signatures
+
 
 # --- DeepSeek API Key ---
 def _get_deepseek_key() -> str:
@@ -173,11 +177,35 @@ def trace_callers(file_path: str, function_name: str) -> list[dict]:
     return callers
 
 
-def graph_reverse_deps(changed_files: list[str]) -> dict:
+def _estimate_tokens(text: str) -> int:
+    """Uoc luong token count (4 chars ~ 1 token)."""
+    return len(text) // 4
+
+
+def _truncate_context(context: str) -> str:
+    """Token Limit Guard: Cat context neu vuot qua MAX_CONTEXT_TOKENS."""
+    tokens = _estimate_tokens(context)
+    if tokens <= MAX_CONTEXT_TOKENS:
+        return context
+    # Chi lay signature lines (ngan hon), bo body code
+    lines = context.split("\n")
+    sig_lines = [l for l in lines if any(k in l for k in [
+        "FILE:", "LOCAL IMPORTS:", "GRAPH-RAG:", "GRAPHIFY NODE:",
+        "export", "function", "interface", "type ", "class ",
+        "reverse_deps", "forward_deps", "depends on", "affected by",
+    ])]
+    truncated = "\n".join(sig_lines)
+    truncated += f"\n\n[CONTEXT TRUNCATED: {tokens} tokens > {MAX_CONTEXT_TOKENS} max. Showing signatures only.]"
+    return truncated
+
+
+def graph_reverse_deps(changed_files: list[str], depth: int = 0) -> dict:
     """
-    Graph-RAG: Doc graph.json, trace reverse dependencies.
-    Tra ve: { changed_file: [affected_files_list] }
+    Graph-RAG: Doc graph.json, trace reverse dependencies toi da MAX_TRACE_DEPTH.
+    Tra ve: { changed_file: {forward_deps, reverse_deps} }
     """
+    if depth >= MAX_TRACE_DEPTH:
+        return {}
     result = {}
     if not os.path.isfile(GRAPHIFY_OUT):
         return result
@@ -429,10 +457,13 @@ def analyze_logic_with_context(diff_text: str, changed_files: list[str], api_key
     if not diff_text.strip() or not api_key:
         return []
 
-    # Step 1-4: Build context
+    # Step 1-4: Build context + Token Limit Guard
     print("   [COT] Building cross-file context...")
     cross_context = build_cross_file_context(changed_files)
-    context_summary = cross_context[:3000] if len(cross_context) > 3000 else cross_context
+    context_summary = _truncate_context(cross_context)
+    raw_tokens = _estimate_tokens(cross_context)
+    kept_tokens = _estimate_tokens(context_summary)
+    print(f"   [COT] Context: {raw_tokens} tokens -> truncated to {kept_tokens} (max {MAX_CONTEXT_TOKENS})")
 
     # Step 5: Chain-of-Thought prompt
     prompt = f"""You are analyzing a code diff with cross-file context.
