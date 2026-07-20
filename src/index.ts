@@ -12,6 +12,7 @@ import { join, sep, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { mapFile, readCodeSymbol, detectFileReferences } from './repo-mapper.js';
 import { ExtractMode } from './extractor.js';
+import { search, indexProject, configure as configureEmbedder, getIndexStats } from './rag/index.js';
 
 /**
  * Resolve project root từ config hoặc auto-detect.
@@ -57,7 +58,13 @@ const entry: any = definePluginEntry({
     // Đọc plugin config (Bug #9 fix: resolve per-call, không cache)
     const pluginCfg = (api as any).pluginConfig || {};
     const cfgProjectRoot = pluginCfg.projectRoot as string | undefined;
+    const embeddingApiKey = pluginCfg.embeddingApiKey as string | undefined;
     const logger = (api as any).logger;
+
+    // Cấu hình embedding nếu có API key
+    if (embeddingApiKey) {
+      configureEmbedder({ apiKey: embeddingApiKey });
+    }
 
     // TOOL: read_code_symbol
     api.registerTool({
@@ -176,6 +183,62 @@ const entry: any = definePluginEntry({
         };
       },
     }));
+
+    // TOOL: semantic_search
+    api.registerTool({
+      name: 'semantic_search',
+      label: 'Semantic Search Code',
+      description: 'Tìm kiếm code bằng ngôn ngữ tự nhiên. Trả về file path và symbol name liên quan đến query.',
+      parameters: Type.Object({
+        query: Type.String({ description: 'Câu hỏi bằng ngôn ngữ tự nhiên (VD: "hàm xử lý thanh toán Momo")' }),
+        topK: Type.Optional(Type.Number({ description: 'Số kết quả (default: 5, max: 10)' })),
+      }),
+      async execute(_id: string, params: unknown) {
+        const { query, topK } = params as any;
+        try {
+          const rootDir = resolveProjectRoot(cfgProjectRoot);
+          const stats = getIndexStats(rootDir);
+
+          if (!stats.exists) {
+            return {
+              content: [{ type: 'text', text: `❌ Chưa có index. Chạy reindex trước:\n\n  EMBEDDING_API_KEY=... node scripts/reindex.mjs "${rootDir}"` }],
+              details: {},
+            };
+          }
+
+          const results = await search(query, rootDir, topK || 5);
+
+          if (results.length === 0) {
+            return {
+              content: [{ type: 'text', text: `🔍 Không tìm thấy kết quả cho: "${query}"` }],
+              details: {},
+            };
+          }
+
+          const lines: string[] = [
+            `🔍 Kết quả tìm kiếm cho: "${query}"`,
+            `   Index: ${stats.totalFiles} files, ${stats.totalChunks} chunks (${stats.indexedAt})`,
+            '',
+          ];
+
+          for (const r of results) {
+            lines.push(`📄 ${r.filePath}`);
+            lines.push(`   📝 ${r.kind} ${r.symbolName}`);
+            lines.push(`   📍 Lines ${r.lineStart}-${r.lineEnd} | 🎯 ${(r.score * 100).toFixed(1)}% match`);
+            lines.push(`   🔖 ${r.signature}`);
+            lines.push(`   💡 Dùng read_code_symbol với filePath="${r.filePath}" symbolName="${r.symbolName}"`);
+            lines.push('');
+          }
+
+          return {
+            content: [{ type: 'text', text: lines.join('\n') }],
+            details: { results },
+          };
+        } catch (err: any) {
+          return { content: [{ type: 'text', text: `❌ Error: ${err.message}` }], details: {} };
+        }
+      },
+    });
   },
 });
 

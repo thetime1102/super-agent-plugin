@@ -3,7 +3,7 @@
   "name": "Super Agent",
   "description": "Tree-sitter Repo Mapper + Code Symbol Tool + Context Engine",
   "contracts": {
-    "tools": ["read_code_symbol"],
+    "tools": ["read_code_symbol", "semantic_search"],
     "contextEngines": ["super-agent"]
   },
   "activation": {
@@ -15,6 +15,10 @@
       "projectRoot": {
         "type": "string",
         "description": "Absolute path to the project root (e.g., C:/projects/my-app). Auto-detected if empty."
+      },
+      "embeddingApiKey": {
+        "type": "string",
+        "description": "API key for embedding model (OpenAI ada-002 or compatible). Required for semantic_search."
       }
     },
     "additionalProperties": false
