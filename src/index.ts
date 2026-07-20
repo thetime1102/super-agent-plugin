@@ -53,9 +53,10 @@ const entry: any = definePluginEntry({
   description: 'Tree-sitter Repo Mapper + Code Symbol Tool + Context Engine',
 
   register(api) {
-    // Đọc plugin config (Bug #7 fix)
+    // Đọc plugin config (Bug #9 fix: resolve per-call, không cache)
     const pluginCfg = (api as any).pluginConfig || {};
-    const projectRoot = resolveProjectRoot(pluginCfg.projectRoot as string | undefined);
+    const cfgProjectRoot = pluginCfg.projectRoot as string | undefined;
+    const logger = (api as any).logger;
 
     // TOOL: read_code_symbol
     api.registerTool({
@@ -69,7 +70,8 @@ const entry: any = definePluginEntry({
       async execute(_id: string, params: unknown) {
         const { filePath, symbolName } = params as any;
         try {
-          const rootDir = projectRoot;
+          // Bug #9: resolve projectRoot per-call (không dùng cached value)
+          const rootDir = resolveProjectRoot(cfgProjectRoot);
           // Bug #8 fix: hỗ trợ cả forward-slash và backslash
           const normalized = filePath.replace(/[\\/]/g, '/');
           const fullPath = normalized.startsWith('/') ? normalized : join(rootDir, normalized);
@@ -115,12 +117,12 @@ const entry: any = definePluginEntry({
         const files = detectFileReferences(lastUserMsg.content);
         if (files.length === 0) return { messages, estimatedTokens: 0 };
 
-        const rootDir = projectRoot;
+        // Bug #9: resolve projectRoot per-call
+        const rootDir = resolveProjectRoot(cfgProjectRoot);
         const additions: string[] = [];
 
         for (const fileRef of files.slice(0, 1)) {
           try {
-            // Bug #8 fix: normalize backslash paths
             const normalized = fileRef.replace(/[\\/]/g, '/');
             const fullPath = normalized.startsWith('/') ? normalized : join(rootDir, normalized);
             const fileMap = await mapFile(fullPath, rootDir);
@@ -151,7 +153,12 @@ const entry: any = definePluginEntry({
             lines.push('', `💡 Dùng "read_code_symbol" với filePath="${fileRef}" để zoom-in.`);
 
             additions.push(lines.join('\n'));
-          } catch { /* skip */ }
+          } catch (err) {
+            // Bug #10: log lỗi thay vì silent skip
+            if (logger && typeof logger.warn === 'function') {
+              logger.warn(`[super-agent] skip file ${fileRef}: ${(err as Error).message}`);
+            }
+          }
         }
 
         if (additions.length === 0) return { messages, estimatedTokens: 0 };
