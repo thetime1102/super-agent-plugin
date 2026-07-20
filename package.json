@@ -1,0 +1,64 @@
+{
+  "name": "@nhatvica/super-agent-plugin",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Super Agent Plugin: Tree-sitter Repo Mapper + Code Symbol Tool + Context Engine for OpenClaw",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc && node scripts/copy-wasm.mjs",
+    "plugin:build": "npm run build && openclaw plugins build --entry ./dist/index.js",
+    "plugin:validate": "openclaw plugins validate --entry ./dist/index.js",
+    "prepublishOnly": "npm run build",
+    "test": "node repo-mapper.mjs",
+    "test:parse": "node test-parse.mjs"
+  },
+  "keywords": [
+    "openclaw",
+    "plugin",
+    "tree-sitter",
+    "repo-mapper",
+    "code-analysis"
+  ],
+  "author": "Nhat Vi Cake Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thetime1102/super-agent-plugin.git"
+  },
+  "bugs": {
+    "url": "https://github.com/thetime1102/super-agent-plugin/issues"
+  },
+  "homepage": "https://github.com/thetime1102/super-agent-plugin#readme",
+  "dependencies": {
+    "tree-sitter-typescript": "^0.23.2",
+    "typebox": "^1.1.39",
+    "web-tree-sitter": "^0.26.11"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "copyfiles": "^2.4.1",
+    "typescript": "^7.0.2"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.5.17"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.5.17",
+      "minGatewayVersion": "2026.5.17"
+    },
+    "build": {
+      "openclawVersion": "2026.5.17",
+      "pluginSdkVersion": "2026.5.17"
+    }
+  }
+}
