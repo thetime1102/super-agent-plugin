@@ -3,7 +3,8 @@
   "name": "Super Agent",
   "description": "Tree-sitter Repo Mapper + Code Symbol Tool + Context Engine",
   "contracts": {
-    "tools": ["read_code_symbol"]
+    "tools": ["read_code_symbol"],
+    "contextEngines": ["super-agent"]
   },
   "activation": {
     "onStartup": true

@@ -17,38 +17,64 @@ import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const WASM_DIR = __dirname; // .wasm files are copied to dist/ at build time
+
+// .wasm files are copied to dist/ at build time
+// Try multiple locations for different installation contexts (npm, ClawHub, dev)
+const WASM_DIR = __dirname;
+const PLUGIN_DIR = resolve(__dirname, '..');
+const WASM_PATHS = [
+  WASM_DIR,                                    // dist/ (npm installed)
+  join(PLUGIN_DIR, 'dist'),                     // plugin-root/dist/
+  join(PLUGIN_DIR, 'node_modules', 'web-tree-sitter'), // dev fallback
+];
 
 // ─── Lazy singleton parser ──────────────────────────────
 
 let _initPromise: Promise<void> | null = null;
 let _parser: any = null;
 
+/**
+ * Resolve a WASM file across multiple fallback paths
+ */
+function resolveWasm(filename: string): string {
+  for (const base of WASM_PATHS) {
+    const p = join(base, filename);
+    if (existsSync(p)) return p;
+  }
+  throw new Error(`WASM file not found: ${filename} (tried ${WASM_PATHS.length} paths)`);
+}
+
+const MAX_INIT_RETRIES = 3;
+
 async function ensureParser() {
   if (_parser) return;
   if (!_initPromise) {
     _initPromise = (async () => {
-      const { Parser, Language } = await import('web-tree-sitter');
-      
-      // Init with locateFile để tìm .wasm (ưu tiên dist/, fallback node_modules)
-      await Parser.init({
-        locateFile: (script: string) => {
-          // Ưu tiên file trong dist/ (đã copy)
-          const distPath = join(WASM_DIR, script);
-          if (existsSync(distPath)) return distPath;
-          // Fallback: node_modules (development)
-          return join(WASM_DIR, '..', 'node_modules', 'web-tree-sitter', script);
-        },
-      });
+      let lastError: Error | null = null;
+      for (let attempt = 1; attempt <= MAX_INIT_RETRIES; attempt++) {
+        try {
+          const { Parser, Language } = await import('web-tree-sitter');
+          
+          await Parser.init({
+            locateFile: (script: string) => resolveWasm(script),
+          });
 
-      // Load TypeScript grammar WASM từ dist/ (đã copy lúc build)
-      const grammarWasm = join(WASM_DIR, 'tree-sitter-typescript.wasm');
-      const fallbackWasm = join(WASM_DIR, '..', 'node_modules', 'tree-sitter-typescript', 'tree-sitter-typescript.wasm');
-      
-      const TS = await Language.load(existsSync(grammarWasm) ? grammarWasm : fallbackWasm);
+          const grammarWasm = resolveWasm('tree-sitter-typescript.wasm');
+          const TS = await Language.load(grammarWasm);
 
-      _parser = new Parser();
-      _parser.setLanguage(TS);
+          _parser = new Parser();
+          _parser.setLanguage(TS);
+          lastError = null; // success
+          break;
+        } catch (err) {
+          lastError = err as Error;
+          if (attempt < MAX_INIT_RETRIES) {
+            // Exponential backoff: 1s, 2s, 4s...
+            await new Promise(r => setTimeout(r, attempt * 1000));
+          }
+        }
+      }
+      if (lastError) throw lastError;
     })();
   }
   await _initPromise;

@@ -43,7 +43,7 @@ for (const [pkg, file] of wasmFiles) {
 }
 
 // Copy package.json + openclaw.plugin.json cho npm publish
-for (const file of ['package.json', 'openclaw.plugin.json', 'README.md', '.gitignore', 'LICENSE']) {
+for (const file of ['package.json', 'openclaw.plugin.json', 'README.md', 'LICENSE']) {
   const src = join(PROJECT_ROOT, file);
   const dest = join(distDir, file);
   if (existsSync(src)) {
