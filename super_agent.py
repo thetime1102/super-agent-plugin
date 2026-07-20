@@ -24,9 +24,11 @@ Usage:
 import argparse
 import hashlib
 import io
+import math
 import os
 import re
 import sqlite3
+import struct
 import subprocess
 import sys
 import threading
@@ -49,10 +51,23 @@ def _out(msg: str):
         print(safe)
 
 # ─── Paths ────────────────────────────────────────────────────────────────
-_TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
-_DOT_OPENCLAW = os.path.dirname(_TOOLS_DIR)
-WORKSPACE = os.path.dirname(_DOT_OPENCLAW)
-MEMORY_DB = os.path.join(WORKSPACE, "memory", "memory.db")
+_PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))  # super-agent-plugin/
+
+# Memory DB: relative to OpenClaw workspace root (~/.openclaw/workspace/memory/memory.db)
+# Walk up until we find workspace/memory/ or fallback to env/userprofile
+MEMORY_DB = None
+_candidates = [
+    os.path.join(os.environ.get("USERPROFILE", ""), ".openclaw", "workspace", "memory", "memory.db"),
+    r"C:\Users\tqv11\.openclaw\workspace\memory\memory.db",
+]
+for _p in _candidates:
+    if os.path.isfile(_p) or os.path.isdir(os.path.dirname(_p)):
+        MEMORY_DB = _p
+        break
+if MEMORY_DB is None:
+    MEMORY_DB = _candidates[0]
+
+WORKSPACE = os.path.dirname(os.path.dirname(MEMORY_DB))  # workspace/
 
 APPDATA = os.environ.get("APPDATA", "")
 SQLMEM_EXT_DIR = os.path.join(APPDATA, "sqlmem", "extensions")
@@ -99,7 +114,7 @@ def get_db() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.row_factory = sqlite3.Row
     _init_schema(conn)
-    _ensure_model(conn)
+    # Model already persisted in DB — first add_text auto-loads it
     _conn_local.conn = conn
     return conn
 
@@ -124,35 +139,9 @@ def close_main_db():
         _conn_local.conn = None
 
 
-def _ensure_model(conn: sqlite3.Connection):
-    """Ensure the embedding model is loaded in this connection."""
-    try:
-        # Check if model is already set
-        cur = conn.execute("SELECT memory_get_option('model')")
-        row = cur.fetchone()
-        model_path = row[0] if row and row[0] else ""
-
-        if not model_path:
-            # Set it
-            model_dir = os.environ.get("LOCALAPPDATA", "")
-            model_path = os.path.join(model_dir, "sqlmem-models", "nomic-embed-text-v1.5.Q8_0.gguf")
-            if os.path.isfile(model_path):
-                conn.execute("SELECT memory_set_model(?)", (model_path,))
-                conn.commit()
-
-        # Validate model works by calling a dummy embedding
-        # This forces model loading - first call will load the model file
-        conn.execute("SELECT memory_add_text('model init test', 'sys_init')")
-        conn.commit()
-        # Clean up the init entry
-        cur = conn.execute("SELECT hash FROM dbmem_content WHERE context='sys_init' LIMIT 1")
-        row = cur.fetchone()
-        if row:
-            conn.execute("SELECT memory_delete(?)", (row[0],))
-            conn.commit()
-    except Exception as e:
-        print(f"!! Model init warning: {e}", file=sys.stderr)
-
+def _ensure_model(conn):
+    """Model persisted in DB — auto-loads on first use."""
+    pass
 
 def _init_schema(conn: sqlite3.Connection):
     """Create tracking tables if they don't exist."""
@@ -431,6 +420,124 @@ def search(conn: sqlite3.Connection, query: str, limit: int = 10):
             print("  (no results)\n")
     except Exception as e:
         print(f"⚠️  Search error: {e}")
+
+
+
+def _cosine_sim(a_bytes: bytes, b_bytes: bytes) -> float:
+    dim = len(a_bytes) // 4
+    a = struct.unpack(f'{dim}f', a_bytes)
+    b = struct.unpack(f'{dim}f', b_bytes)
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(x * x for x in b))
+    if na * nb == 0:
+        return 0.0
+    return dot / (na * nb)
+
+
+def hybrid_search(conn, query, limit=10, graphify_dir=""):
+    results = []
+    # Step 1: Vector search
+    try:
+        conn.execute("SELECT memory_add_text(?, 'sys_srch')", (query,))
+        conn.commit()
+        cur = conn.execute("SELECT hash FROM dbmem_content WHERE context='sys_srch' LIMIT 1")
+        row = cur.fetchone()
+        if row:
+            cur = conn.execute("SELECT embedding FROM dbmem_vault WHERE hash=?", (row[0],))
+            emb = cur.fetchone()
+            if emb:
+                cur = conn.execute("""
+                    SELECT v.hash, v.embedding, c.context
+                    FROM dbmem_vault v
+                    JOIN dbmem_content c ON v.hash = c.hash
+                    WHERE c.context NOT LIKE 'sys_%%'
+                """)
+                scored = []
+                for v_hash, v_emb, ctx in cur.fetchall():
+                    sim = _cosine_sim(emb[0], v_emb)
+                    scored.append((sim, v_hash, ctx))
+                scored.sort(key=lambda x: -x[0])
+                for sim, v_hash, ctx in scored[:limit]:
+                    cur2 = conn.execute("SELECT file_path FROM sa_chunks WHERE mem_hash=? LIMIT 1", (v_hash,))
+                    r2 = cur2.fetchone()
+                    fp = r2[0] if r2 else v_hash
+                    results.append((sim, fp, ctx, v_hash, True))
+            conn.execute("SELECT memory_delete(?)", (row[0],))
+            conn.commit()
+    except Exception as e:
+        print(f"  [vector] Error: {e}")
+
+    # Step 2: Keyword
+    try:
+        cur = conn.execute(
+            "SELECT path, context, value FROM dbmem_content WHERE value LIKE ? AND context NOT LIKE 'sys_%%' LIMIT ?",
+            (f"%{query}%", limit))
+        for path, ctx, value in cur.fetchall():
+            cur2 = conn.execute("SELECT file_path FROM sa_chunks WHERE mem_hash=? LIMIT 1", (path,))
+            r2 = cur2.fetchone()
+            fp = r2[0] if r2 else path
+            results.append((1.0, fp, ctx, path, False))
+    except Exception as e:
+        print(f"  [keyword] Error: {e}")
+
+    # Merge & dedup
+    seen = set()
+    merged = []
+    for score, fpath, ctx, v_hash, is_vec in results:
+        if fpath in seen:
+            continue
+        seen.add(fpath)
+        snippet = ""
+        try:
+            cur = conn.execute("SELECT value FROM dbmem_content WHERE hash=? LIMIT 1", (v_hash,))
+            row = cur.fetchone()
+            if row:
+                val = row[0]
+                idx = val.lower().find(query.lower())
+                if idx >= 0:
+                    s = max(0, idx - 60)
+                    e = min(len(val), idx + len(query) + 60)
+                    snippet = val[s:e].replace("\n", " ")
+        except Exception:
+            pass
+        merged.append((score, fpath, ctx, snippet, is_vec))
+    merged.sort(key=lambda x: (-x[0], not x[4]))
+
+    if not merged:
+        print("  (no results)\n")
+        return
+
+    for i, (score, fpath, ctx, snippet, is_vec) in enumerate(merged[:limit]):
+        tag = "[V]" if is_vec else "[K]"
+        relpath = _stored_path(fpath) if os.path.isabs(fpath) else fpath
+        print(f"  {tag} {score:.4f} [{ctx}] {relpath}")
+        if snippet:
+            print(f"      ...{snippet}...")
+        if is_vec and graphify_dir and i == 0:
+            _graphify_explain(fpath, graphify_dir)
+        print()
+
+    vs = sum(1 for r in results if r[4])
+    ks = sum(1 for r in results if not r[4])
+    print(f"  --- {len(merged)} results (vector {vs}, keyword {ks})")
+
+
+def _graphify_explain(file_path, graphify_dir):
+    gj = os.path.join(graphify_dir, "graphify-out", "graph.json")
+    if not os.path.isfile(gj):
+        return
+    try:
+        rel = _stored_path(file_path)
+        print(f"      [graphify] {rel}...")
+        r = subprocess.run(["graphify", "explain", file_path, "--graph", gj],
+                          capture_output=True, text=True, timeout=15)
+        if r.stdout:
+            for line in r.stdout.strip().split("\n")[:8]:
+                print(f"      | {line}")
+    except Exception:
+        pass
+
 
 
 # ─── Status ────────────────────────────────────────────────────────────────
@@ -749,6 +856,9 @@ Examples:
     p_search = sub.add_parser("search", help="Search memory")
     p_search.add_argument("query", help="Search query")
     p_search.add_argument("limit", nargs="?", type=int, default=10, help="Max results")
+    p_search.add_argument("--vector", "-v", action="store_true", help="Use hybrid vector + keyword search")
+    p_search.add_argument("--graphify", type=str, nargs="?", const=WORKSPACE, default="",
+                          help="Graphify project dir for AST explain (default: WORKSPACE)")
 
     # status
     sub.add_parser("status", help="Show memory status")
@@ -803,7 +913,11 @@ Examples:
         git_index(conn, args.revision, args.context)
 
     elif args.command == "search":
-        search(conn, args.query, args.limit)
+        if args.vector:
+            graphify_dir = args.graphify or WORKSPACE
+            hybrid_search(conn, args.query, args.limit, graphify_dir)
+        else:
+            search(conn, args.query, args.limit)
 
     elif args.command == "status":
         show_status(conn)
