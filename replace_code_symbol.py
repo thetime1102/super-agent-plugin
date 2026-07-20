@@ -215,7 +215,7 @@ def replace_symbol(file_path: str, symbol_name: str, new_code: str, dry_run: boo
     print(f"   Location: lines {node.start_point[0]+1}-{node.end_point[0]+1}")
     print(f"   Bytes: [{start_byte}:{end_byte}]")
 
-    # Diff
+    # Diff — safe print (handle CP932 encoding errors)
     diff = difflib.unified_diff(
         old_text.splitlines(True),
         new_code.splitlines(True),
@@ -224,20 +224,24 @@ def replace_symbol(file_path: str, symbol_name: str, new_code: str, dry_run: boo
         lineterm='',
     )
     for line in diff:
-        print(f"   {line}")
+        try:
+            print(f"   {line}")
+        except UnicodeEncodeError:
+            safe = line.encode('ascii', errors='replace').decode('ascii')
+            print(f"   {safe}")
 
     if dry_run:
-        print("** Dry-run — no changes written")
+        print("** Dry-run - no changes written")
         return True
 
-    # Backup
+    # Ghi file TRUOC khi print finish (tranh crash CP932 mat data)
     backup = file_path + '.bak'
     shutil.copy2(file_path, backup)
-    print(f"   Backup: {backup}")
 
-    # Write
     with open(file_path, 'wb') as f:
         f.write(new_bytes)
+
+    print(f"   Backup: {backup}")
     print(f"   Written: {file_path}")
     return True
 
