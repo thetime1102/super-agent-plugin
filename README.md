@@ -28,6 +28,13 @@
 ### 🧩 `read_code_symbol` Tool
 Agent-callable tool to **zoom into a specific function, class, or interface** — returning only the relevant code block instead of the entire file.
 
+### 🔎 `semantic_search` Tool (Phase 2)
+**Semantic code search** using natural language queries. Built on a RAG (Retrieval-Augmented Generation) architecture:
+- Embed queries via OpenAI-compatible API (text-embedding-ada-002)
+- Pre-indexed vector database of code symbols
+- Returns file paths, symbol names, and match scores
+- Seamlessly integrates with `read_code_symbol` for detail retrieval
+
 ### 🧠 `super-agent` Context Engine
 Automatically detects when you mention a file path in conversation and injects a **file map** (imports + declarations) into the system prompt context — so the LLM knows the file's structure immediately.
 
@@ -188,8 +195,15 @@ super-agent-plugin/
 │   ├── index.ts                 ← Plugin entry point
 │   ├── repo-mapper.ts           ← File analysis + symbol extraction
 │   ├── extractor.ts             ← Smart content extraction (3 modes)
-│   └── parsers/
-│       └── index.ts             ← Multi-language parser registry (lazy-load)
+│   ├── parsers/
+│   │   └── index.ts             ← Multi-language parser registry (lazy-load)
+│   └── rag/
+│       ├── index.ts             ← Public API barrel
+│       ├── types.ts             ← Shared types (CodeChunk, IndexEntry)
+│       ├── embedder.ts          ← API Embedding client + cosine similarity
+│       ├── store.ts             ← JSON vector index on disk
+│       ├── indexer.ts           ← Project scanner + chunker + embedder
+│       └── search.ts            ← Query → embed → similarity → results
 ├── scripts/
 │   └── copy-wasm.mjs            ← Build-time WASM copy
 ├── tests/
@@ -207,6 +221,8 @@ super-agent-plugin/
 ```
 
 ### Data Flow
+
+#### Code Understanding Flow
 ```
 User mentions file path in message
   │
@@ -225,6 +241,26 @@ User mentions file path in message
   └─ Return extracted body (full / signature / smart)
 ```
 
+#### Semantic Search Flow
+```
+User: "Find the function that handles Momo payment"
+  │
+  ▼ semantic_search(query, topK=5)
+  ├─ Embed query via API → vector (1536d)
+  ├─ Cosine similarity against indexed symbols
+  └─ Return top matches
+  
+  ▼ LLM reads results
+  ├─ sees: src/services/payment.ts → processMomoPayment
+  └─ calls read_code_symbol("payment.ts", "processMomoPayment")
+
+Index (pre-built):
+  ┌─────────────┐    ┌──────────┐    ┌──────────────┐
+  │ Scan project │───▶│ Chunk &  │───▶│ API Embed    │
+  │ (walk dirs)  │    │ Extract  │    │ + store JSON │
+  └─────────────┘    └──────────┘    └──────────────┘
+```
+
 ### Supported Languages
 | Extension | Language | Parser |
 |-----------|----------|--------|
@@ -234,6 +270,35 @@ User mentions file path in message
 | `.py` | Python | `tree-sitter-python` |
 | `.json` | JSON | `tree-sitter-json` |
 | `.css` | CSS | `tree-sitter-css` |
+
+### Semantic Search (RAG)
+
+#### Prerequisites
+- OpenAI-compatible embedding API key (set `embeddingApiKey` in plugin config)
+
+#### Indexing a Project
+```bash
+EMBEDDING_API_KEY=sk-... node scripts/reindex.mjs /path/to/your/project
+```
+
+The indexer will:
+1. Walk the project directory (skipping `node_modules`, `.git`, `dist`, etc.)
+2. Parse each source file with Tree-sitter
+3. Extract all named symbols (functions, classes, interfaces, types, consts)
+4. Generate embeddings via API
+5. Save to `.rag-index.json`
+
+#### Querying
+Once indexed, the LLM can search using natural language:
+```text
+semantic_search(query: "hàm xử lý thanh toán Momo", topK: 5)
+```
+
+Results include:
+- File path + symbol name
+- Match score (%)
+- Signature preview
+- Suggested `read_code_symbol` command for detail
 
 ---
 
@@ -269,16 +334,18 @@ All bugs are tracked on [GitHub Issues](https://github.com/thetime1102/super-age
 | Bug | Status | Description |
 |-----|--------|-------------|
 | #1 | ✅ Fixed | Manifest missing from npm files |
-| #2 | ✅ Fixed | WASM_DIR resolve fails in non-dev contexts |
-| #3 | ✅ Fixed | Context engine not declared in contracts |
+| #2 | ✅ Fixed | WASM_DIR resolve fails |
+| #3 | ✅ Fixed | Context engine not in contracts |
 | #4 | ✅ Fixed | No retry on WASM init failure |
 | #5 | ✅ Fixed | Root path resolution fails |
-| #6 | ✅ Fixed | detectFileReferences regex too narrow |
+| #6 | ✅ Fixed | detectFileReferences too narrow |
 | #7 | ✅ Fixed | ConfigSchema empty |
 | #8 | ✅ Fixed | No Windows backslash support |
 | #9 | ✅ Fixed | projectRoot cached in closure |
 | #10 | ✅ Fixed | Silent error swallowing |
 | #11 | ✅ Fixed | False positive bare word matches |
+
+**Test Coverage:** 115 tests (45 core + 26 integration + 44 RAG)
 
 ---
 
