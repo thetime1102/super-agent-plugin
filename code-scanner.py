@@ -31,7 +31,8 @@ WORKSPACE = r"C:\Users\tqv11\.openclaw\workspace"
 DEV_DIR = os.path.join(WORKSPACE, "nhatvi-ecosystem-dev")
 SUPER_AGENT_DIR = os.path.join(WORKSPACE, "super-agent-plugin")
 GRAPHIFY_OUT = os.path.join(DEV_DIR, "graphify-out", "graph.json")
-REPORT_FILE = os.path.join(WORKSPACE, "memory", ".scan_report.json")
+REPORT_DIR = os.path.join(WORKSPACE, "memory")
+REPORT_FILE = os.path.join(REPORT_DIR, ".scan_report.json")  # Temp, se ghi de boi hash
 
 # --- Safety Guards ---
 MAX_TRACE_DEPTH = 3
@@ -516,10 +517,53 @@ If clean, respond: []"""
 # REPORT
 # ==========================================================================
 
+def _get_latest_report_file() -> str:
+    """Tim file report moi nhat (theo commit hash hoac timestamp)."""
+    dir_path = REPORT_DIR
+    if not os.path.isdir(dir_path):
+        return REPORT_FILE
+    files = [f for f in os.listdir(dir_path) if f.startswith(".scan_report_") and f.endswith(".json")]
+    if not files:
+        return REPORT_FILE
+    # Sort by timestamp trong ten file (format: .scan_report_<sha>.json)
+    files.sort(reverse=True)
+    return os.path.join(dir_path, files[0])
+
+
+def _cleanup_old_reports():
+    """Xoa report files cu hon 24h."""
+    dir_path = REPORT_DIR
+    if not os.path.isdir(dir_path):
+        return
+    now = time.time()
+    for fname in os.listdir(dir_path):
+        if fname.startswith(".scan_report_") and fname.endswith(".json"):
+            fpath = os.path.join(dir_path, fname)
+            try:
+                age = now - os.path.getmtime(fpath)
+                if age > 86400:  # 24 hours
+                    os.unlink(fpath)
+            except Exception:
+                pass
+
+
 def write_report(eslint: dict, logic: list[dict], files_scanned: list[str]):
-    """Ghi scan report vao .scan_report.json."""
+    """Ghi scan report voi commit hash trong ten file."""
     critical_logic = [i for i in logic if i.get("severity") == "critical"]
+
+    # Lay commit hash
+    commit_hash = "unknown"
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, timeout=10, cwd=DEV_DIR,
+        )
+        commit_hash = r.stdout.decode("utf-8", errors="replace").strip() or "unknown"
+    except Exception:
+        pass
+
     report = {
+        "commit_hash": commit_hash,
         "timestamp": time.time(),
         "datetime": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "files_scanned": files_scanned[:10],
@@ -535,19 +579,27 @@ def write_report(eslint: dict, logic: list[dict], files_scanned: list[str]):
         },
         "has_issues": len(eslint["errors"]) > 0 or len(critical_logic) > 0,
     }
-    os.makedirs(os.path.dirname(REPORT_FILE), exist_ok=True)
-    with open(REPORT_FILE, "w", encoding="utf-8") as f:
+
+    # File name with commit hash (chong overwrite)
+    report_file = os.path.join(REPORT_DIR, f".scan_report_{commit_hash}.json")
+    os.makedirs(REPORT_DIR, exist_ok=True)
+    with open(report_file, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
+
+    # Clean old reports > 24h
+    _cleanup_old_reports()
+
     return report
 
 
 def print_report(report: dict):
-    print(f"\n## Scan Report:")
+    commit_hash = report.get("commit_hash", "??")
+    print(f"\n## Scan Report [{commit_hash}]:")
     print(f"   Files: {report['files_scanned'][:3]}")
     print(f"   ESLint: {report['eslint']['errors']} err / {report['eslint']['warnings']} warn")
     print(f"   Logic: {report['logic']['total']} issues ({report['logic']['critical']} critical)")
     if report["has_issues"]:
-        print(f"\n!! Issues found! Report saved to: {REPORT_FILE}")
+        print(f"\n!! Issues found! Report: .scan_report_{commit_hash}.json")
 
 
 # ==========================================================================
@@ -658,11 +710,12 @@ def main():
 
 
 def check_report():
-    """Doc va xoa report file - goi tu OpenClaw session."""
-    if os.path.isfile(REPORT_FILE):
-        with open(REPORT_FILE, "r", encoding="utf-8") as f:
+    """Doc va xoa report file moi nhat - goi tu OpenClaw session."""
+    report_file = _get_latest_report_file()
+    if os.path.isfile(report_file):
+        with open(report_file, "r", encoding="utf-8") as f:
             report = json.load(f)
-        os.unlink(REPORT_FILE)
+        os.unlink(report_file)
         return report
     return None
 
