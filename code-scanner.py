@@ -173,21 +173,97 @@ def trace_callers(file_path: str, function_name: str) -> list[dict]:
     return callers
 
 
+def graph_reverse_deps(changed_files: list[str]) -> dict:
+    """
+    Graph-RAG: Doc graph.json, trace reverse dependencies.
+    Tra ve: { changed_file: [affected_files_list] }
+    """
+    result = {}
+    if not os.path.isfile(GRAPHIFY_OUT):
+        return result
+
+    try:
+        with open(GRAPHIFY_OUT, "r", encoding="utf-8") as f:
+            graph = json.load(f)
+    except Exception:
+        return result
+
+    nodes = graph.get("nodes", [])
+    links = graph.get("links", graph.get("edges", []))
+
+    # Build node lookup: file name -> node id
+    file_to_node = {}
+    for n in nodes:
+        nid = n.get("id", "")
+        nfile = n.get("file", n.get("label", ""))
+        if nfile and nid:
+            key = os.path.basename(nfile).replace(".ts", "").replace(".js", "")
+            file_to_node[key] = nid
+
+    # Build reverse dep map: target_id -> [source_ids]
+    reverse = {}
+    forward = {}
+    for link in links:
+        src = link.get("source", "")
+        tgt = link.get("target", "")
+        rel = link.get("relation", link.get("type", ""))
+        if not src or not tgt:
+            continue
+        if tgt not in reverse:
+            reverse[tgt] = []
+        reverse[tgt].append({"source": src, "relation": rel})
+        if src not in forward:
+            forward[src] = []
+        forward[src].append({"target": tgt, "relation": rel})
+
+    # For each changed file, find affected chain
+    for cf in changed_files:
+        base = os.path.basename(cf).replace(".ts", "").replace(".js", "").replace(".tsx", "")
+        node_id = file_to_node.get(base, "")
+        if not node_id:
+            continue
+
+        # Forward: what does this file import/call
+        deps = forward.get(node_id, [])
+        # Reverse: what imports/calls this file
+        affected = reverse.get(node_id, [])
+
+        result[cf] = {
+            "forward_deps": [d["target"] for d in deps[:8]],
+            "reverse_deps": [d["source"] for d in affected[:8]],
+            "relations": [d["relation"] for d in (deps + affected)[:10]],
+        }
+
+    return result
+
+
 def build_cross_file_context(changed_files: list[str]) -> str:
     """
-    Xay dung cross-file context cho LLM:
-    - Imports cua tung file changed
-    - Export functions cua cac file local duoc import
-    - Caller chain cho function phuc tap
+    Xay dung cross-file context cho LLM (GRAPH-RAG):
+    1. Imports cua tung file changed
+    2. Export functions cua cac file local duoc import
+    3. Graphify explain + reverse deps (Graph-RAG)
     """
     parts = []
     seen_files = set()
+
+    # Bat dau voi Graph-RAG reverse deps
+    graph_rag = graph_reverse_deps(changed_files)
+    if graph_rag:
+        parts.append("=== GRAPH-RAG: REVERSE DEPENDENCY CHAIN ===")
+        for cf, info in graph_rag.items():
+            rel = os.path.basename(cf)
+            if info["reverse_deps"]:
+                parts.append(f"  [{rel}] affected by -> {', '.join(info['reverse_deps'][:5])}")
+            if info["forward_deps"]:
+                parts.append(f"  [{rel}] depends on -> {', '.join(info['forward_deps'][:5])}")
 
     for file_path in changed_files:
         if not os.path.isfile(file_path):
             continue
 
-        parts.append(f"\n=== FILE: {os.path.relpath(file_path, DEV_DIR)} ===")
+        rel_path = os.path.relpath(file_path, DEV_DIR)
+        parts.append(f"\n=== FILE: {rel_path} ===")
 
         # Imports
         imports = resolve_imports(file_path)
@@ -198,26 +274,24 @@ def build_cross_file_context(changed_files: list[str]) -> str:
             for imp in local_imports:
                 parts.append(f"  - {imp['module']} -> {imp['resolved_path']}")
                 parts.append(f"    symbols: {', '.join(imp['exported_symbols'][:5])}")
-
-                # Resolve export functions from imported files
                 if imp["resolved_path"] and imp["resolved_path"] not in seen_files:
                     seen_files.add(imp["resolved_path"])
                     exports = get_exported_functions(imp["resolved_path"])
                     if exports:
-                        parts.append(f"    exports from this file: {', '.join(exports[:8])}")
+                        parts.append(f"    exports: {', '.join(exports[:8])}")
 
-        # Graphify explain
+        # Graphify explain + chain
         if os.path.isfile(GRAPHIFY_OUT):
             try:
-                rel = os.path.relpath(file_path, DEV_DIR)
+                rel_short = os.path.relpath(file_path, DEV_DIR)
                 r = subprocess.run(
-                    ["graphify", "explain", rel, "--graph", GRAPHIFY_OUT],
+                    ["graphify", "explain", rel_short, "--graph", GRAPHIFY_OUT],
                     capture_output=True, text=True, timeout=15,
                     cwd=DEV_DIR,
                 )
                 if r.stdout:
                     lines = r.stdout.strip().split("\n")[:6]
-                    parts.append("GRAPHIFY:")
+                    parts.append("GRAPHIFY NODE:")
                     for line in lines:
                         parts.append(f"  {line}")
             except Exception:
