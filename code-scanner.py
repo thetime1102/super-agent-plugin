@@ -1,18 +1,23 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
-code-scanner.py — Super Agent Proactive Code Scanner
-=====================================================
-3-layer kiến trúc Event-Driven:
+code-scanner.py -- Super Agent Proactive Code Scanner v2
+========================================================
+Chỉ SCAN, không FIX. Report lên OpenClaw chat.
 
-  Layer 1: ESLint (chuyên dụng) — quét syntax + style, auto-fix
-  Layer 2: LLM (DeepSeek) — quét logic: Race Condition, Memory Leak, Missing Transaction
-  Layer 3: Notify — nếu phát hiện lỗi critical → alert
+Event-Driven Flow:
+  git commit → hook (async) → code-scanner.py
+       ↓
+  Layer 1: ESLint --format json → phân tích lỗi
+  Layer 2: DeepSeek Logic Scan → Race/Memory/Transaction
+       ↓
+  Ghi .scan_report.json + stdout
+       ↓
+  OpenClaw session phát hiện report → ping anh Vinh
 
 Usage:
-  python code-scanner.py                          # Scan từ git diff
-  python code-scanner.py --all                    # Scan toàn bộ project
+  python code-scanner.py                          # Scan git diff (post-commit)
+  python code-scanner.py --all                    # Scan toàn bộ project  
   python code-scanner.py --file src/service.ts    # Scan 1 file
-  python code-scanner.py --notify                 # Bật notification khi có lỗi
 """
 
 import argparse
@@ -21,7 +26,6 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 import time
 from datetime import datetime
 from typing import Optional
@@ -30,36 +34,58 @@ from typing import Optional
 WORKSPACE = r"C:\Users\tqv11\.openclaw\workspace"
 DEV_DIR = os.path.join(WORKSPACE, "nhatvi-ecosystem-dev")
 SUPER_AGENT_DIR = os.path.join(WORKSPACE, "super-agent-plugin")
-STATE_FILE = os.path.join(WORKSPACE, "memory", ".scanner_state.json")
-CONSOLIDATION_DB = os.path.join(WORKSPACE, "memory", "consolidation.db")
+REPORT_FILE = os.path.join(WORKSPACE, "memory", ".scan_report.json")
 
-# ─── State Tracking ───────────────────────────────────────────────────────
 
-def get_last_scan_sha() -> str:
-    try:
-        with open(STATE_FILE) as f:
-            return json.load(f).get("last_sha", "")
-    except Exception:
-        return ""
+# ─── DeepSeek API Key Auto-Detect ─────────────────────────────────────────
 
-def set_last_scan_sha(sha: str):
-    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
-    with open(STATE_FILE, "w") as f:
-        json.dump({"last_sha": sha, "updated_at": time.time()}, f)
+def _get_deepseek_key() -> str:
+    """Tự động tìm DEEPSEEK_API_KEY từ nhiều nguồn."""
+    # 1. Environment variable
+    key = os.environ.get("DEEPSEEK_API_KEY", "")
+    if key:
+        return key
+
+    # 2. .env.dev (project dev config)
+    for env_file in [
+        os.path.join(DEV_DIR, ".env.dev"),
+        os.path.join(DEV_DIR, ".env"),
+        os.path.join(DEV_DIR, ".env.prod.local"),
+    ]:
+        if os.path.isfile(env_file):
+            with open(env_file, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("DEEPSEEK_API_KEY"):
+                        key = line.split("=", 1)[1].strip().strip("'\"")
+                        if key:
+                            return key
+
+    # 3. OpenClaw config
+    oc_config = os.path.join(os.environ.get("USERPROFILE", ""), ".openclaw", "openclaw.json")
+    if os.path.isfile(oc_config):
+        try:
+            with open(oc_config, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            # Check for deepseek key in config
+            env_key = cfg.get("env", {}).get("DEEPSEEK_API_KEY", "")
+            if env_key:
+                return env_key
+        except Exception:
+            pass
+
+    return ""
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# LAYER 1: ESLint — Syntax & Style Scanner
+# LAYER 1: ESLint Scan (CHỈ SCAN, KHÔNG FIX)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def run_eslint(files: list[str]) -> dict:
-    """
-    Chạy ESLint với --format json, trả về parsed results.
-    """
-    if not files:
-        return {"errors": [], "warnings": [], "auto_fixable": []}
-
+    """Chạy ESLint --format json, trả về parsed results. KHÔNG auto-fix."""
     results = {"errors": [], "warnings": [], "auto_fixable": []}
+    if not files:
+        return results
 
     try:
         cmd = ["npx.cmd", "eslint", "--format", "json", "--max-warnings", "999"] + files
@@ -67,131 +93,55 @@ def run_eslint(files: list[str]) -> dict:
             cmd, capture_output=True, text=True, timeout=60, cwd=DEV_DIR,
             encoding="utf-8", errors="replace",
         )
-
-        if proc.returncode not in (0, 1):  # 0=clean, 1=has warnings/errors
-            print(f"   [eslint] Process error: {proc.stderr[:200]}")
+        if proc.returncode not in (0, 1):
             return results
 
-        eslint_out = proc.stdout.strip()
-        if not eslint_out:
-            return results
-
-        parsed = json.loads(eslint_out)
+        parsed = json.loads(proc.stdout.strip() or "[]")
         for file_result in parsed:
-            file_path = file_result.get("filePath", "")
+            fp = file_result.get("filePath", "")
             for msg in file_result.get("messages", []):
                 entry = {
-                    "file": file_path,
+                    "file": fp,
                     "line": msg.get("line", 0),
                     "col": msg.get("column", 0),
                     "end_line": msg.get("endLine", msg.get("line", 0)),
                     "end_col": msg.get("endColumn", msg.get("column", 0)),
                     "rule": msg.get("ruleId", "unknown"),
                     "message": msg.get("message", ""),
-                    "severity": msg.get("severity", 2),  # 1=warn, 2=error
-                    "fix": msg.get("fix"),  # ESLint fix info
+                    "severity": msg.get("severity", 2),
                 }
-
                 if entry["severity"] == 2:
                     results["errors"].append(entry)
                 else:
                     results["warnings"].append(entry)
 
-                if entry["fix"]:
-                    results["auto_fixable"].append(entry)
-
     except FileNotFoundError:
-        print("   [eslint] ESLint not found. Run: npm install")
+        print("   [eslint] Not found. Run: npm install")
+    except json.JSONDecodeError:
+        pass
     except subprocess.TimeoutExpired:
-        print("   [eslint] Timeout (60s)")
-    except json.JSONDecodeError as e:
-        print(f"   [eslint] JSON parse error: {e}")
+        print("   [eslint] Timeout")
     except Exception as e:
-        print(f"   [eslint] Error: {e}")
+        print(f"   [eslint] {e}")
 
     return results
 
 
-def auto_fix_eslint(results: dict) -> int:
-    """
-    Auto-fix ESLint errors using replace_code_symbol.
-    Returns number of fixes applied.
-    """
-    fixes = 0
-    replace_tool = os.path.join(SUPER_AGENT_DIR, "replace_code_symbol.py")
-
-    if not os.path.isfile(replace_tool):
-        print("   [fix] replace_code_symbol.py not found")
-        return 0
-
-    for entry in results.get("auto_fixable", []):
-        fix = entry.get("fix")
-        if not fix:
-            continue
-
-        file_path = entry["file"]
-        if not os.path.isfile(file_path):
-            # ESLint reports absolute path, but we might need to construct it
-            alt = os.path.join(DEV_DIR, os.path.basename(file_path))
-            if os.path.isfile(alt):
-                file_path = alt
-            else:
-                continue
-
-        # Read file
-        try:
-            with open(file_path, "rb") as f:
-                source = f.read()
-
-            text_start = fix.get("text")
-            if not text_start:
-                continue
-
-            range_start = fix.get("range", [entry["col"] - 1, entry["col"]])
-            if len(range_start) < 2:
-                continue
-
-            # Simple byte-range replace as suggested by ESLint fix
-            start_byte = range_start[0]
-            end_byte = range_start[1]
-            new_bytes = source[:start_byte] + text_start.encode("utf-8") + source[end_byte:]
-
-            # Backup + write
-            backup = file_path + ".scanbak"
-            import shutil
-            shutil.copy2(file_path, backup)
-
-            with open(file_path, "wb") as f:
-                f.write(new_bytes)
-
-            fixes += 1
-            os.unlink(backup)  # Clean up backup after successful write
-
-        except Exception as e:
-            print(f"   [fix] Failed: {entry['rule']} in {os.path.basename(file_path)}: {e}")
-
-    return fixes
-
-
 # ═══════════════════════════════════════════════════════════════════════════
-# LAYER 2: LLM Logic Scan — DeepSeek-powered
+# LAYER 2: DeepSeek Logic Scan
 # ═══════════════════════════════════════════════════════════════════════════
 
 def get_git_diff_text(git_dir: str, since_sha: str = "") -> str:
-    """Get full diff text for LLM analysis."""
     if not os.path.isdir(os.path.join(git_dir, ".git")):
         return ""
-
     try:
         r = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, timeout=15, cwd=git_dir)
         current = r.stdout.decode("utf-8", errors="replace").strip()
         if not current:
             return ""
-
         base = since_sha if since_sha else f"{current}~1"
-
         r = subprocess.run(
-            ["git", "diff", f"{base}..{current}", "--", "*.ts", "*.tsx", "*.js", "*.py"],
+            ["git", "diff", f"{base}..{current}", "--", "*.ts", "*.tsx"],
             capture_output=True, timeout=30, cwd=git_dir,
         )
         return r.stdout.decode("utf-8", errors="replace")
@@ -199,29 +149,18 @@ def get_git_diff_text(git_dir: str, since_sha: str = "") -> str:
         return ""
 
 
-def call_deepseek(prompt: str) -> str:
-    """Call DeepSeek API for logic analysis. Uses project's DeepSeek config."""
-    api_key = os.environ.get("DEEPSEEK_API_KEY", "")
-    if not api_key:
-        # Try loading from .env
-        env_file = os.path.join(DEV_DIR, ".env.dev")
-        if os.path.isfile(env_file):
-            with open(env_file) as f:
-                for line in f:
-                    if "DEEPSEEK_API_KEY" in line:
-                        api_key = line.split("=", 1)[1].strip().strip("'\"")
-                        break
-
-    if not api_key:
-        return "⚠️ DeepSeek API key not configured"
-
-    import urllib.request
-    import urllib.error
+def call_deepseek(prompt: str, api_key: str) -> str:
+    """Call DeepSeek API. Returns response text or error message."""
+    import urllib.request, urllib.error
 
     payload = json.dumps({
         "model": "deepseek-chat",
         "messages": [
-            {"role": "system", "content": "You are a senior TypeScript code reviewer. Analyze diffs for logic bugs only. Be concise."},
+            {"role": "system", "content": (
+                "You are a senior TypeScript code reviewer. Analyze diffs for LOGIC BUGS ONLY. "
+                "Ignore syntax, style, formatting. Focus on: race conditions, memory leaks, "
+                "missing transactions, async safety. Be concise."
+            )},
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.1,
@@ -236,210 +175,190 @@ def call_deepseek(prompt: str) -> str:
             "Authorization": f"Bearer {api_key}",
         },
     )
-
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             result = json.loads(resp.read())
             return result["choices"][0]["message"]["content"]
+    except urllib.error.HTTPError as e:
+        return f"!! DeepSeek API {e.code}: {e.read().decode()[:200]}"
     except Exception as e:
-        return f"⚠️ LLM call failed: {e}"
+        return f"!! DeepSeek error: {e}"
 
 
-def analyze_logic(diff_text: str) -> list[dict]:
-    """
-    LLM phân tích git diff tìm lỗi logic:
-    - Race Condition (concurrent DB writes)
-    - Memory Leak (missing cleanup in React/Vue)
-    - Missing Transaction (multi-step DB without transaction)
-    """
-    if not diff_text.strip():
+def analyze_logic(diff_text: str, api_key: str) -> list[dict]:
+    """LLM phân tích diff tìm lỗi logic. Trả về list issues."""
+    if not diff_text.strip() or not api_key:
         return []
 
-    prompt = f"""Analyze this git diff for logic bugs ONLY (not syntax/style):
+    prompt = f"""Analyze this git diff for LOGIC BUGS ONLY (ignore syntax/style):
 
-1. RACE CONDITION: Concurrent DB writes without locking? Shared state mutation?
-2. MEMORY LEAK: setInterval/setTimeout/addEventListener without cleanup? React useEffect missing return cleanup?
-3. MISSING TRANSACTION: Two+ sequential DB writes without BEGIN/COMMIT or transaction wrapper?
-4. ASYNC SAFETY: Promise.all on dependent operations? Missing await in critical path?
+1. RACE CONDITION: Concurrent DB writes? Shared mutable state without lock?
+2. MEMORY LEAK: setInterval/addEventListener without cleanup? useEffect missing return?
+3. MISSING TRANSACTION: Sequential DB writes without BEGIN/COMMIT/transaction wrapper?
+4. ASYNC SAFETY: Promise.all on dependent ops? Missing await in critical path?
 
 DIFF:
 ```
-{diff_text[:8000]}
+{diff_text[:6000]}
 ```
 
-Respond in JSON format ONLY:
-```json
+Respond JSON array ONLY:
 [
-  {{
-    "type": "race_condition|memory_leak|missing_transaction|async_safety",
-    "severity": "critical|warning",
-    "file": "filename.ts",
-    "line": 42,
-    "description": "Brief description",
-    "suggestion": "How to fix"
-  }}
+  {{"type":"race_condition|memory_leak|missing_transaction|async_safety",
+    "severity":"critical|warning",
+    "file":"path.ts",
+    "line":42,
+    "description":"...",
+    "suggestion":"..."}}
 ]
-```
-If no issues found, respond with: []"""
+If clean, respond: []"""
 
-    response = call_deepseek(prompt)
-    if response.startswith("⚠️"):
-        return [{"type": "error", "severity": "warning", "description": response}]
+    response = call_deepseek(prompt, api_key)
+    if response.startswith("!!"):
+        return [{"type": "llm_error", "severity": "warning", "description": response}]
 
-    # Extract JSON array from response
     try:
-        import re as regex
-        json_match = regex.search(r'\[\s*\{.*\}\s*\]', response, regex.DOTALL)
-        if json_match:
-            return json.loads(json_match.group())
+        match = re.search(r'\[\s*\{.*\}\s*\]', response, re.DOTALL)
+        if match:
+            return json.loads(match.group())
         return []
     except Exception:
-        return [{"type": "parse_error", "severity": "warning", "description": response[:200]}]
+        return [{"type": "parse_error", "severity": "info", "description": response[:200]}]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# LAYER 3: Notification
+# REPORT -- Ghi file để OpenClaw session phát hiện và báo cáo
 # ═══════════════════════════════════════════════════════════════════════════
 
-def format_alert(logic_issues: list[dict]) -> str:
-    """Format logic issues for display/notification."""
-    if not logic_issues:
-        return ""
+def write_report(eslint: dict, logic: list[dict], files_scanned: list[str]):
+    """Ghi scan report vào .scan_report.json -- OpenClaw sẽ đọc và ping."""
+    critical_logic = [i for i in logic if i.get("severity") == "critical"]
+    report = {
+        "timestamp": time.time(),
+        "datetime": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "files_scanned": files_scanned[:10],
+        "eslint": {
+            "errors": len(eslint["errors"]),
+            "warnings": len(eslint["warnings"]),
+            "details": eslint["errors"][:5] + eslint["warnings"][:3],
+        },
+        "logic": {
+            "total": len(logic),
+            "critical": len(critical_logic),
+            "details": logic[:5],
+        },
+        "has_issues": len(eslint["errors"]) > 0 or len(critical_logic) > 0,
+    }
 
-    criticals = [i for i in logic_issues if i.get("severity") == "critical"]
-    warnings = [i for i in logic_issues if i.get("severity") != "critical"]
+    os.makedirs(os.path.dirname(REPORT_FILE), exist_ok=True)
+    with open(REPORT_FILE, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
 
-    lines = []
-    if criticals:
-        lines.append("🚨 **CRITICAL LOGIC BUGS DETECTED** 🚨")
-        lines.append("")
-        for issue in criticals[:5]:
-            lines.append(f"  🔴 [{issue['type']}] {issue.get('file', '?')}:{issue.get('line', '?')}")
-            lines.append(f"     {issue.get('description', '')}")
-            lines.append(f"     → Fix: {issue.get('suggestion', '')}")
-            lines.append("")
+    return report
 
-    if warnings:
-        if criticals:
-            lines.append("---")
-        lines.append("⚠️  Warnings:")
-        for issue in warnings[:3]:
-            lines.append(f"  🟡 [{issue['type']}] {issue.get('description', '')}")
 
-    return "\n".join(lines)
+def print_report(report: dict):
+    """In report ra console."""
+    print("\n## Scan Report:")
+    print(f"   Files: {report['files_scanned'][:3]}")
+    print(f"   ESLint: {report['eslint']['errors']} err / {report['eslint']['warnings']} warn")
+    print(f"   Logic: {report['logic']['total']} issues ({report['logic']['critical']} critical)")
+
+    if report["has_issues"]:
+        print(f"\n!!  Issues found! Report saved to: {REPORT_FILE}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# MAIN SCANNER
+# MAIN
 # ═══════════════════════════════════════════════════════════════════════════
 
-def scan(notify: bool = False, scan_all: bool = False, single_file: str = ""):
-    """Main scan pipeline: ESLint → LLM Logic → Notify."""
-    print("** Code Scanner starting...")
+def scan(scan_all: bool = False, single_file: str = ""):
+    """Main scan pipeline: ESLint → LLM Logic → Report. KHÔNG auto-fix."""
+    print("## Code Scanner v2 -- Scan only, no auto-fix\n")
 
-    # ── Step 0: Determine files to scan ──
-    files_to_scan = []
-
+    # Step 0: Determine files
+    files = []
     if single_file:
-        files_to_scan = [single_file]
+        files = [single_file]
     elif scan_all:
-        files_to_scan = ["src/", "web/src/"]
+        files = ["src/", "web/src/"]
     else:
-        # Scan git diff (last commit)
-        last_sha = get_last_scan_sha()
-        diff_text = get_git_diff_text(DEV_DIR, last_sha)
+        r = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD~1..HEAD", "--", "*.ts", "*.tsx", "*.js"],
+            capture_output=True, timeout=15, cwd=DEV_DIR,
+        )
+        files = [f.strip() for f in r.stdout.decode("utf-8", errors="replace").split("\n") if f.strip()]
+        if not files:
+            print("   No changed files. Nothing to scan.")
+            return
 
-        if not diff_text.strip():
-            print("   No new changes to scan")
-            # Still run ESLint on recent files
-            r = subprocess.run(
-                ["git", "diff", "--name-only", "HEAD~1..HEAD", "--", "*.ts", "*.tsx"],
-                capture_output=True, timeout=15, cwd=DEV_DIR,
-            )
-            files = r.stdout.decode("utf-8", errors="replace").strip().split("\n")
-            files_to_scan = [f for f in files if f.strip()]
-            if not files_to_scan:
-                print("   No files changed. Exiting.")
-                return
-        else:
-            # Extract files from diff
-            for line in diff_text.split("\n"):
-                if line.startswith("+++ b/"):
-                    f = line[6:]
-                    if f.endswith((".ts", ".tsx", ".js", ".py")):
-                        files_to_scan.append(f)
+    print(f"   Scanning {len(files)} file(s)...")
 
-    if not files_to_scan:
-        files_to_scan = ["src/", "web/src/"]
+    # Layer 1: ESLint
+    print("\n## [Layer 1] ESLint...")
+    eslint = run_eslint(files)
+    print(f"   Errors: {len(eslint['errors'])} | Warnings: {len(eslint['warnings'])}")
+    for e in eslint["errors"][:3]:
+        rel = os.path.relpath(e["file"], DEV_DIR) if os.path.isabs(e["file"]) else e["file"]
+        print(f"     ERR {rel}:{e['line']}  {e['rule']} -- {e['message'][:80]}")
 
-    print(f"   Scanning: {len(files_to_scan)} file(s)")
-
-    # ── Layer 1: ESLint ──
-    print("\n** [Layer 1] ESLint Scan...")
-    eslint_results = run_eslint(files_to_scan)
-
-    if eslint_results["errors"] or eslint_results["warnings"]:
-        print(f"   ESLint: {len(eslint_results['errors'])} errors, {len(eslint_results['warnings'])} warnings")
-        if eslint_results["auto_fixable"]:
-            print(f"   Auto-fixable: {len(eslint_results['auto_fixable'])} issues")
-            fixes = auto_fix_eslint(eslint_results)
-            print(f"   Auto-fixed: {fixes} issues")
+    # Layer 2: LLM Logic
+    print("\n## [Layer 2] DeepSeek Logic Scan...")
+    api_key = _get_deepseek_key()
+    if not api_key:
+        print("   !!  DEEPSEEK_API_KEY not found. Check .env.dev or env vars.")
+        print("   Layer 2 skipped. ESLint results still available.")
+        logic = []
     else:
-        print("   ESLint: clean ✅")
-
-    # ── Layer 2: LLM Logic Scan (chỉ khi có diff) ──
-    logic_issues = []
-    print("\n** [Layer 2] LLM Logic Scan...")
-
-    if not single_file and not scan_all:
-        diff_text = get_git_diff_text(DEV_DIR, get_last_scan_sha())
-        if diff_text.strip():
-            logic_issues = analyze_logic(diff_text)
-            if logic_issues:
-                print(f"   LLM found: {len(logic_issues)} potential issues")
+        print(f"   API Key loaded ({api_key[:8]}...{api_key[-4:]})")
+        diff = get_git_diff_text(DEV_DIR)
+        if diff.strip():
+            logic = analyze_logic(diff, api_key)
+            if logic:
+                print(f"   Found {len(logic)} potential logic issue(s):")
+                for issue in logic:
+                    sev = "[CRIT]" if issue.get("severity") == "critical" else "[WARN]"
+                    print(f"     {sev} [{issue.get('type','?')}] {issue.get('file','?')}:{issue.get('line','?')}")
+                    print(f"        {issue.get('description','')}")
             else:
-                print("   LLM: clean ✅")
+                print("   No logic issues found [OK]")
         else:
             print("   No diff to analyze")
+            logic = []
+
+    # Generate report
+    report = write_report(eslint, logic if api_key else [], files)
+    print_report(report)
+
+    # Final summary
+    if report["has_issues"]:
+        print("\n!!  Issues detected! Report ready for review.")
+        print("   Type 'super-agent report' to see details, or wait for OpenClaw to notify.")
     else:
-        print("   Skipped (--file or --all mode)")
-
-    # ── Report ──
-    print("\n** Summary:")
-    print(f"   ESLint: {len(eslint_results['errors'])} err / {len(eslint_results['warnings'])} warn")
-    print(f"   Logic: {len(logic_issues)} issue(s)")
-
-    # Update tracking SHA
-    try:
-        r = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, timeout=15, cwd=DEV_DIR)
-        set_last_scan_sha(r.stdout.decode("utf-8", errors="replace").strip())
-    except Exception:
-        pass
-
-    # Alert if critical
-    criticals = [i for i in logic_issues if i.get("severity") == "critical"]
-    if criticals:
-        msg = format_alert(logic_issues)
-        print(f"\n{msg}")
-        print("\n⚠️  Critical logic issues detected! Use replace_code_symbol --dry-run to review.")
-    elif logic_issues:
-        msg = format_alert(logic_issues)
-        print(f"\n{msg}")
-
-    return logic_issues, eslint_results
+        print("\n[OK] Clean scan -- no issues found.")
 
 
 # ─── CLI ──────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Super Agent Code Scanner - ESLint + LLM Logic")
+    parser = argparse.ArgumentParser(description="Super Agent Code Scanner v2 -- Scan only")
     parser.add_argument("--all", action="store_true", help="Scan toàn bộ project")
     parser.add_argument("--file", type=str, help="Scan 1 file cụ thể")
-    parser.add_argument("--notify", action="store_true", help="Bật notification khi có lỗi")
     args = parser.parse_args()
+    scan(scan_all=args.all, single_file=args.file)
 
-    scan(notify=args.notify, scan_all=args.all, single_file=args.file)
+
+def check_report():
+    """Đọc và xoá report file -- gọi từ OpenClaw session để lấy kết quả scan."""
+    if os.path.isfile(REPORT_FILE):
+        with open(REPORT_FILE, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        os.unlink(REPORT_FILE)
+        return report
+    return None
 
 
 if __name__ == "__main__":
     main()
+
+
