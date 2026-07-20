@@ -15,7 +15,8 @@
 
 | Tool | File | Chức năng |
 |------|------|-----------|
-| **🔍 Super Agent** | `super_agent.py` | Auto-indexing engine + Hybrid Search (Vector + FTS5) |
+| **🧠 Pattern Store** | `pattern_store.py` | VERIFIED_PATTERN learning engine: Jaccard scoring, few-shot building, top-N pruning |
+| **🔍 Super Agent** | `super_agent.py` | Auto-indexing engine + Hybrid Search + Pattern Store CLI |
 | **🔬 Code Scanner** | `code-scanner.py` | 3-Layer Proactive Scanner: ESLint → DeepSeek Logic → Graph-RAG |
 | **🩺 Code Surgery** | `replace_code_symbol.py` | Tree-sitter AST code replace (byte-level, dry-run) |
 | **🧠 Auto Consolidate** | `auto-consolidate.py` | Event-driven memory consolidation (git → classify → save) |

@@ -832,6 +832,8 @@ Examples:
   super-agent search "token budget"          Search memory
   super-agent status                         Show stats
   super-agent clean                          Remove stale entries
+  super-agent report-fix                     Record a VERIFIED_PATTERN
+  super-agent pattern-stats                  Show pattern learning stats
         """,
     )
     sub = parser.add_subparsers(dest="command")
@@ -868,6 +870,28 @@ Examples:
 
     # daemon (internal)
     sub.add_parser("daemon", help="Start background watcher (internal)")
+
+    # report-fix (PatternStore)
+    p_rf = sub.add_parser("report-fix", help="Record a VERIFIED_PATTERN for few-shot learning")
+    p_rf.add_argument("--type", required=True, help="Error type (race_condition|memory_leak|...)")
+    p_rf.add_argument("--description", required=True, help="Error description")
+    p_rf.add_argument("--context", default="", help="Error context (scan report, stack trace)")
+    p_rf.add_argument("--fix-diff", required=True, help="The fix diff/unified diff")
+    p_rf.add_argument("--fix-desc", default="", help="Fix description")
+    p_rf.add_argument("--file", default="", help="File path affected")
+    p_rf.add_argument("--line-start", type=int, default=0)
+    p_rf.add_argument("--line-end", type=int, default=0)
+    p_rf.add_argument("--original", default="", help="Original code before fix")
+    p_rf.add_argument("--branch", default="dev", help="Git branch")
+    p_rf.add_argument("--commit", default="", help="Commit SHA")
+    p_rf.add_argument("--approved-by", default="human", choices=["human", "ci-passed"])
+
+    # pattern-stats
+    sub.add_parser("pattern-stats", help="Show pattern learning statistics")
+
+    # prune-patterns
+    p_prune = sub.add_parser("prune-patterns", help="Keep top N patterns per error type")
+    p_prune.add_argument("--keep", type=int, default=5, help="Max patterns per type")
 
     args = parser.parse_args()
     if not args.command:
@@ -927,6 +951,63 @@ Examples:
 
     elif args.command == "daemon":
         daemon_mode()
+
+    elif args.command == "report-fix":
+        try:
+            from pattern_store import PatternStore
+            store = PatternStore()
+            result = store.record_fix(
+                error_type=args.type,
+                error_description=args.description,
+                error_context=args.context,
+                fix_diff=args.fix_diff,
+                fix_description=args.fix_desc,
+                file_path=args.file,
+                line_start=args.line_start,
+                line_end=args.line_end,
+                original_code=args.original,
+                branch=args.branch,
+                commit_sha=args.commit,
+                approved_by=args.approved_by,
+            )
+            status = "NEW pattern" if result["is_new"] else "UPDATED existing"
+            print(f"[PatternStore] {status} #{result['id']} (used {result['application_count']}x)")
+        except ImportError:
+            print("!! pattern_store.py not found")
+
+    elif args.command == "pattern-stats":
+        try:
+            from pattern_store import PatternStore
+            store = PatternStore()
+            stats = store.get_stats()
+            print(f"== Pattern Store Statistics ==")
+            print(f"  Total patterns: {stats['total_patterns']}")
+            print(f"  By type:")
+            for t in stats['by_type']:
+                print(f"    {t['type']}: {t['count']} patterns, {t['total_applications']} applications")
+            print(f"  Most used:")
+            for m in stats['most_used']:
+                print(f"    \"{m['description']}\" - used {m['times']}x")
+        except ImportError:
+            print("!! pattern_store.py not found")
+
+    elif args.command == "prune-patterns":
+        try:
+            from pattern_store import PatternStore
+            store = PatternStore()
+            pruned = store.prune_patterns(args.keep)
+            total = sum(pruned.values())
+            if total == 0:
+                print(f"[PatternStore] No patterns needed pruning (all within top {args.keep})")
+            else:
+                print(f"[PatternStore] Pruned {total} pattern(s):")
+                for et, count in pruned.items():
+                    if count > 0:
+                        print(f"  {et}: removed {count}")
+            stats = store.get_stats()
+            print(f"  Remaining: {stats['total_patterns']}")
+        except ImportError:
+            print("!! pattern_store.py not found")
 
     close_db()
 

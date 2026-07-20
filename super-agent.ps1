@@ -95,6 +95,11 @@ COMMANDS:
 
     daemon               Start background watcher (hidden window)
 
+    report-fix           Record a VERIFIED_PATTERN for few-shot learning
+                         e.g. super-agent report-fix --type race_condition --fix-diff "..."
+
+    pattern-stats        Show pattern learning statistics
+
 FLAGS:
     --bg                 Background mode (for watch)
     --context <label>    Context label (default: workspace or code:dev)
@@ -193,6 +198,18 @@ switch ($Command.ToLower()) {
 
     "clean" {
         & $PythonExe $PyScript clean
+    }
+
+    "report-fix" {
+        & $PythonExe $PyScript report-fix $Arguments
+    }
+
+    "pattern-stats" {
+        & $PythonExe $PyScript pattern-stats
+    }
+
+    "prune-patterns" {
+        & $PythonExe $PyScript prune-patterns $Arguments
     }
 
     default {
