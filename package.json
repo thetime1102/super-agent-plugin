@@ -19,7 +19,7 @@
                     "test:parse":  "node test-parse.mjs",
                     "test:core":  "node tests/test-core.mjs",
                     "test:integration":  "node tests/test-integration.mjs",
-                    "test":  "node tests/test-core.mjs \u0026\u0026 node tests/test-integration.mjs"
+                    "test":  "node tests/test-core.mjs \u0026\u0026 node tests/test-integration.mjs \u0026\u0026 node tests/test-rag.mjs"
                 },
     "keywords":  [
                      "openclaw",
