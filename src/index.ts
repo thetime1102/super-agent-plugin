@@ -11,6 +11,7 @@ import { Type } from 'typebox';
 import { join, sep, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { mapFile, readCodeSymbol, detectFileReferences } from './repo-mapper.js';
+import { ExtractMode } from './extractor.js';
 
 /**
  * Resolve project root từ config hoặc auto-detect.
@@ -66,16 +67,21 @@ const entry: any = definePluginEntry({
       parameters: Type.Object({
         filePath: Type.String({ description: 'Đường dẫn file (VD: src/services/llm.service.ts)' }),
         symbolName: Type.String({ description: 'Tên symbol (VD: callDeepSeek)' }),
+        mode: Type.Optional(Type.Union([
+          Type.Literal('full'),
+          Type.Literal('signature'),
+          Type.Literal('smart'),
+        ], { description: '"full" = nguyên body, "signature" = chỉ chữ ký, "smart" = body ngắn/signature nếu > 50 dòng' })),
       }),
       async execute(_id: string, params: unknown) {
-        const { filePath, symbolName } = params as any;
+        const { filePath, symbolName, mode } = params as any;
         try {
           // Bug #9: resolve projectRoot per-call (không dùng cached value)
           const rootDir = resolveProjectRoot(cfgProjectRoot);
           // Bug #8 fix: hỗ trợ cả forward-slash và backslash
           const normalized = filePath.replace(/[\\/]/g, '/');
           const fullPath = normalized.startsWith('/') ? normalized : join(rootDir, normalized);
-          const result = await readCodeSymbol(fullPath, symbolName);
+          const result = await readCodeSymbol(fullPath, symbolName, mode || 'smart');
           if (!result) {
             return { content: [{ type: 'text', text: `❌ Symbol "${symbolName}" không tìm thấy trong "${filePath}".` }], details: {} };
           }

@@ -24,6 +24,9 @@ const wasmFiles = [
   ['tree-sitter-typescript', 'tree-sitter-typescript.wasm'],
   ['tree-sitter-typescript', 'tree-sitter-tsx.wasm'],
   ['web-tree-sitter', 'web-tree-sitter.wasm'],
+  ['tree-sitter-python', 'tree-sitter-python.wasm'],
+  ['tree-sitter-json', 'tree-sitter-json.wasm'],
+  ['tree-sitter-css', 'tree-sitter-css.wasm'],
 ];
 
 let copied = 0;

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * repo-mapper.ts — Core Repo Mapper module
  * 
  * Tree-sitter based TypeScript file analyzer.
@@ -7,87 +7,28 @@
  *   - readCodeSymbol(filePath, symbolName) → zoom-in body
  *   - detectFileReferences(text) → file path matching
  * 
- * ⚠️  WASM files được copy vào dist/ khi build.
- *    Đường dẫn resolve động qua __dirname để chạy được ở mọi máy.
+ * Upgraded: multi-language parsers + smart truncation
  */
 
-import { readFileSync, existsSync } from 'node:fs';
-import { relative, dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// .wasm files are copied to dist/ at build time
-// Try multiple locations for different installation contexts (npm, ClawHub, dev)
-const WASM_DIR = __dirname;
-const PLUGIN_DIR = resolve(__dirname, '..');
-const WASM_PATHS = [
-  WASM_DIR,                                    // dist/ (npm installed)
-  join(PLUGIN_DIR, 'dist'),                     // plugin-root/dist/
-  join(PLUGIN_DIR, 'node_modules', 'web-tree-sitter'), // dev fallback
-];
+import { existsSync } from 'node:fs';
+import { relative } from 'node:path';
+import { parseFile, isSupportedExt, LANGUAGE_NAMES, LanguageId } from './parsers/index.js';
+import { extractSymbol, ExtractMode } from './extractor.js';
 
 // ─── Lazy singleton parser ──────────────────────────────
 
-let _initPromise: Promise<void> | null = null;
-let _parser: any = null;
-
-/**
- * Resolve a WASM file across multiple fallback paths
- */
-function resolveWasm(filename: string): string {
-  for (const base of WASM_PATHS) {
-    const p = join(base, filename);
-    if (existsSync(p)) return p;
+const _parserPromise: Promise<void> = (async () => {
+  // Warm up the base parser + default grammar (TS)
+  // This ensures fast first-call latency
+  try {
+    await parseFile(process.cwd()); // triggers lazy init
+  } catch {
+    // expected — process.cwd() isn't a file; but parser initializes
   }
-  throw new Error(`WASM file not found: ${filename} (tried ${WASM_PATHS.length} paths)`);
-}
-
-const MAX_INIT_RETRIES = 3;
+})();
 
 async function ensureParser() {
-  if (_parser) return;
-  if (!_initPromise) {
-    _initPromise = (async () => {
-      let lastError: Error | null = null;
-      for (let attempt = 1; attempt <= MAX_INIT_RETRIES; attempt++) {
-        try {
-          const { Parser, Language } = await import('web-tree-sitter');
-          
-          await Parser.init({
-            locateFile: (script: string) => resolveWasm(script),
-          });
-
-          const grammarWasm = resolveWasm('tree-sitter-typescript.wasm');
-          const TS = await Language.load(grammarWasm);
-
-          _parser = new Parser();
-          _parser.setLanguage(TS);
-          lastError = null; // success
-          break;
-        } catch (err) {
-          lastError = err as Error;
-          if (attempt < MAX_INIT_RETRIES) {
-            // Exponential backoff: 1s, 2s, 4s...
-            await new Promise(r => setTimeout(r, attempt * 1000));
-          }
-        }
-      }
-      if (lastError) throw lastError;
-    })();
-  }
-  await _initPromise;
-}
-
-async function parseFile(filePath: string) {
-  if (!existsSync(filePath)) {
-    throw new Error(`File not found: ${filePath}`);
-  }
-  await ensureParser();
-  const source = readFileSync(filePath, 'utf-8');
-  const tree = _parser.parse(source);
-  return { source, root: tree.rootNode };
+  await _parserPromise;
 }
 
 // ─── Types ──────────────────────────────────────────────
@@ -113,6 +54,7 @@ export interface FileMap {
   file: string;
   size: number;
   lines: number;
+  language: string;
   imports: ImportEntry[];
   declarations: Declaration[];
 }
@@ -124,6 +66,7 @@ export interface SymbolBody {
   line: number;
   endLine: number;
   body: string;
+  truncated: boolean;
 }
 
 // ─── Extract single declaration ─────────────────────────
@@ -254,7 +197,7 @@ function extractImports(root: any, source: string): ImportEntry[] {
 // ─── mapFile: Full file analysis ────────────────────────
 
 export async function mapFile(filePath: string, rootDir?: string): Promise<FileMap> {
-  const { source, root } = await parseFile(filePath);
+  const { source, root, languageId } = await parseFile(filePath);
   const lines = source.split('\n');
 
   const imports: ImportEntry[] = extractImports(root, source);
@@ -282,13 +225,24 @@ export async function mapFile(filePath: string, rootDir?: string): Promise<FileM
   }
 
   const filePathRel = rootDir ? relative(rootDir, filePath) : filePath;
-  return { file: filePathRel, size: source.length, lines: lines.length, imports, declarations };
+  return {
+    file: filePathRel,
+    size: source.length,
+    lines: lines.length,
+    language: LANGUAGE_NAMES[languageId] || languageId,
+    imports,
+    declarations,
+  };
 }
 
 // ─── readCodeSymbol: Zoom-in tool ───────────────────────
 
-export async function readCodeSymbol(filePath: string, symbolName: string): Promise<SymbolBody | null> {
-  const { source, root } = await parseFile(filePath);
+export async function readCodeSymbol(
+  filePath: string,
+  symbolName: string,
+  mode: ExtractMode = 'smart',
+): Promise<SymbolBody | null> {
+  const { source, root, languageId } = await parseFile(filePath);
 
   // Search top-level declarations
   for (let i = 0; i < root.childCount; i++) {
@@ -305,14 +259,7 @@ export async function readCodeSymbol(filePath: string, symbolName: string): Prom
     const name = source.substring(nameNode.startIndex, nameNode.endIndex);
     if (name !== symbolName) continue;
 
-    return {
-      symbolName,
-      kind: node.type,
-      file: filePath,
-      line: node.startPosition.row + 1,
-      endLine: node.endPosition.row + 1,
-      body: source.substring(node.startIndex, node.endIndex),
-    };
+    return extractSymbol(node, source, filePath, symbolName, node.type, mode, languageId);
   }
 
   // Search class methods
@@ -337,14 +284,7 @@ export async function readCodeSymbol(filePath: string, symbolName: string): Prom
       if (!mn) continue;
       if (source.substring(mn.startIndex, mn.endIndex) !== symbolName) continue;
 
-      return {
-        symbolName: `${cName}.${symbolName}`,
-        kind: 'method',
-        file: filePath,
-        line: m.startPosition.row + 1,
-        endLine: m.endPosition.row + 1,
-        body: source.substring(m.startIndex, m.endIndex),
-      };
+      return extractSymbol(m, source, filePath, `${cName}.${symbolName}`, 'method', mode, languageId);
     }
   }
 
@@ -353,34 +293,25 @@ export async function readCodeSymbol(filePath: string, symbolName: string): Prom
 
 // ─── detectFileReferences ───────────────────────────────
 
-/**
- * Quét user message tìm patterns giống file path
- * VD: "src/services/llm.service.ts" hoặc "llm.service.ts"
- * Bug #6 fix: thêm common Next.js path prefixes
- * Bug #8 fix: hỗ trợ cả forward-slash và backslash (Windows)
- */
 export function detectFileReferences(text: string): string[] {
   const results: string[] = [];
 
-  const PREFIXES = 'src|app|lib|components|hooks|utils|config|types|pages|web|data|dist|public';
-  const EXT = '(tsx|ts|jsx|json|js|css|sql)';
-  const EXT_BARE = '(tsx|ts|jsx|json|js|css)';
+  // Extended path prefixes for auto-detection
+  const PREFIXES = 'src|app|lib|components|hooks|utils|config|types|pages|web|data|dist|public|test|e2e|scripts|migrations|assets';
+  const EXT = '(tsx|ts|jsx|json|js|mjs|css|sql|html|py|yaml|yml|toml|env)';
+  const EXT_BARE = '(tsx|ts|jsx|json|js|mjs|css)';
 
   // Pattern 1: relative source paths (forward slash)
-  const pat1 = new RegExp('(?:' + PREFIXES + ')[/\\\\][a-zA-Z0-9_\\\-/.]+\.' + EXT, 'g');
+  const pat1 = new RegExp('(?:' + PREFIXES + ')[/\\\\][a-zA-Z0-9_\\\\\\-/.]+\\.' + EXT, 'g');
   results.push(...[...text.matchAll(pat1)].map(m => m[0].trim()));
 
   // Pattern 2: @/ alias paths
-  const pat2 = /@\/[a-zA-Z0-9_\-/]+\.(tsx|ts|jsx|json|js|css|sql)/g;
+  const pat2 = /@\/[a-zA-Z0-9_\-/]+\.(tsx|ts|jsx|json|js|css|sql|py|html)/g;
   results.push(...[...text.matchAll(pat2)].map(m => m[0].trim()));
 
-  // Pattern 3: bare filename (quoted or bare)
-  const pat3 = new RegExp('[\"\\\'`]?([a-zA-Z0-9_\\\-]+\.' + EXT_BARE + ')[\"\\\'`]?', 'g');
+  // Pattern 3: bare filename with quotes (required to avoid false positives)
+  const pat3 = new RegExp('["\\\'`]([a-zA-Z0-9_\\\\\\-]+\\.' + EXT_BARE + ')["\\\'`]', 'g');
   results.push(...[...text.matchAll(pat3)].map(m => m[1].trim()));
-
-  // Pattern 4: Windows backslash paths
-  const pat4 = new RegExp('(?:' + PREFIXES + ')\\\\[a-zA-Z0-9_\\\-/.]+\.' + EXT, 'g');
-  results.push(...[...text.matchAll(pat4)].map(m => m[0].trim().replace(/\\/g, '/')));
 
   return [...new Set(results.filter(Boolean))];
 }
