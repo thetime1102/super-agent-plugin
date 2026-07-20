@@ -618,8 +618,33 @@ def scan(scan_all: bool = False, single_file: str = ""):
     report = write_report(eslint, logic if api_key else [], files)
     print_report(report)
 
+    # Context Pruning: push findings to consolidation.db
+    if logic and api_key:
+        try:
+            import sqlite3
+            CONS_DB = os.path.join(WORKSPACE, "memory", "consolidation.db")
+            conn = sqlite3.connect(CONS_DB)
+            now = datetime.now().strftime("%Y-%m-%d")
+            for issue in logic:
+                conn.execute(
+                    """INSERT INTO consolidation (date, category, title, description, files_affected, severity, source, commit_sha)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (now, issue.get("type", "bug"),
+                     issue.get("description", "")[:120],
+                     issue.get("cot_reasoning", issue.get("description", "")),
+                     json.dumps(files[:5]),
+                     issue.get("severity", "info"),
+                     "scanner_v3",
+                     "")
+                )
+            conn.commit()
+            conn.close()
+            print(f"   [Prune] {len(logic)} findings saved to consolidation.db")
+        except Exception as e:
+            print(f"   [Prune] Error: {e}")
+
     if report["has_issues"]:
-        print(f"\n!! Issues detected! Report ready for review.")
+        print(f"\n!! Issues detected. Reported to .scan_report.json + consolidation.db")
     else:
         print(f"\n[OK] Clean scan - no issues found.")
 
