@@ -1,372 +1,163 @@
-<p align="center">
-  <a href="https://nhatvicake.com/">
-    <img src="https://raw.githubusercontent.com/thetime1102/super-agent-plugin/main/assets/logo.png" alt="NHAT VI CAKE" width="200" />
-  </a>
-  <h1 align="center">Super Agent Plugin for OpenClaw</h1>
-  <p align="center">
-    <em>Powered by <a href="https://nhatvicake.com/">NHAT VI CAKE</a> 🍰</em>
-  </p>
-  <p align="center">
-    <strong>Tree-sitter Repo Mapper + Code Symbol Tool + Context Engine</strong>
-    <br />
-    Empowering AI agents to understand code structure without reading entire files — <strong>saving up to 98% tokens</strong>.
-  </p>
-</p>
+# 🧠 Super Agent — NHAT VI CAKE Auto-Indexing & Code Scanner
+
+> **Semantic memory + Proactive code scanning + Tree-sitter code surgery**
+> Powering AI agents to understand, search, and fix code automatically.
 
 <p align="center">
-  <a href="https://github.com/thetime1102/super-agent-plugin/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License" /></a>
-  <a href="https://github.com/thetime1102/super-agent-plugin/releases"><img src="https://img.shields.io/github/v/release/thetime1102/super-agent-plugin" alt="Release" /></a>
-  <a href="https://www.npmjs.com/package/@nhatvica/super-agent-plugin"><img src="https://img.shields.io/npm/v/@nhatvica/super-agent-plugin" alt="npm" /></a>
-  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen" alt="Node" /></a>
-  <img src="https://img.shields.io/badge/status-stable-green" alt="Status" />
+  <img src="https://img.shields.io/badge/python-3.11+-blue" alt="Python" />
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License" />
+  <img src="https://img.shields.io/badge/status-stable-brightgreen" alt="Status" />
 </p>
 
 ---
 
-<p align="center">
-  <a href="./README.md">English</a> ·
-  <a href="./README.vi.md">Tiếng Việt</a> ·
-  <a href="./README.ja.md">日本語</a>
-</p>
+## 📦 Tool Suite
+
+| Tool | File | Chức năng |
+|------|------|-----------|
+| **🔍 Super Agent** | `super_agent.py` | Auto-indexing engine + Hybrid Search (Vector + FTS5) |
+| **🔬 Code Scanner** | `code-scanner.py` | 3-Layer Proactive Scanner: ESLint → DeepSeek Logic → Graph-RAG |
+| **🩺 Code Surgery** | `replace_code_symbol.py` | Tree-sitter AST code replace (byte-level, dry-run) |
+| **🧠 Auto Consolidate** | `auto-consolidate.py` | Event-driven memory consolidation (git → classify → save) |
+| **🔒 Safe Push** | `safe-push.ps1` | PowerShell-safe git commit+push wrapper |
 
 ---
 
-## ✨ Features
+## 🚀 Quick Start
 
-### 🧩 `read_code_symbol` Tool
-Agent-callable tool to **zoom into a specific function, class, or interface** — returning only the relevant code block instead of the entire file.
+### 1. Super Agent — Semantic Memory
 
-### 🔎 `semantic_search` Tool (Phase 2)
-**Semantic code search** using natural language queries. Built on a RAG (Retrieval-Augmented Generation) architecture:
-- Embed queries via OpenAI-compatible API (text-embedding-ada-002)
-- Pre-indexed vector database of code symbols
-- Returns file paths, symbol names, and match scores
-- Seamlessly integrates with `read_code_symbol` for detail retrieval
+Auto-indexes code changes, supports hybrid search (vector + keyword).
 
-### 🧠 `super-agent` Context Engine
-Automatically detects when you mention a file path in conversation and injects a **file map** (imports + declarations) into the system prompt context — so the LLM knows the file's structure immediately.
+```powershell
+# Index codebase
+python super_agent.py index src/ --context code:dev
 
-### 🌐 Multi-Language Support
-Parses **TypeScript, TSX, JavaScript, Python, JSON, and CSS** with lazy-loaded Tree-sitter WASM grammars — zero native dependencies.
+# Hybrid search (vector + FTS5)
+python super_agent.py search "auto post worker" --vector
 
-### 🎯 Three Extraction Modes
-| Mode | Description | Token Savings |
-|------|-------------|---------------|
-| `full` | Returns the complete symbol body | — |
-| `signature` | Function/class signature only (name + parameters + return type) | ~90-98% |
-| `smart` | Full body if < 50 lines, auto-truncated to signature if larger | Adaptive |
-
-### 💾 Smart Memory
-- **JSDoc preservation**: Never strips `/** ... */` comments above exported declarations
-- **Dependency-aware**: Extracts the full import graph for each file
-- **Lazy grammar loading**: Only loads the WASM parser for the file type being accessed
-
----
-
-## 📦 Installation
-
-### Via OpenClaw CLI
-```bash
-# Install from local path
-openclaw plugins install ./super-agent-plugin
-
-# Or from npm (coming soon)
-openclaw plugins install @nhatvica/super-agent-plugin
-
-# Or from ClawHub
-openclaw plugins install clawhub:@nhatvica/super-agent-plugin
+# Git incremental index + file watcher
+python super_agent.py git-index
+python super_agent.py watch --bg
 ```
 
-### Via npm (development)
-```bash
-npm install @nhatvica/super-agent-plugin
+### 2. Code Scanner — 3-Layer Proactive
+
+```powershell
+# Scan last commit changes
+python code-scanner.py
+
+# Scan specific file
+python code-scanner.py --file src/service.ts
+
+# Full project scan
+python code-scanner.py --all
 ```
 
----
+3 layers:
+| Layer | Engine | Phát hiện |
+|-------|--------|-----------|
+| **1** | ESLint | Syntax + Style errors |
+| **2** | DeepSeek CoT | Logic bugs: Race/Memory/Transaction |
+| **3** | Graph-RAG | Cross-file impact analysis |
 
-## ⚙️ Configuration
+### 3. Code Surgery — Tree-sitter Replace
 
-Add to your `openclaw.json`:
+```powershell
+# Find symbol location
+python replace_code_symbol.py src/file.ts "myFunction" --find
 
-```json5
-{
-  plugins: {
-    entries: {
-      "super-agent": {
-        enabled: true,
-        config: {
-          // Optional: auto-detected if empty
-          projectRoot: "/path/to/your/project",
-        },
-      },
-    },
-  },
-}
+# Dry-run replace (show diff, no write)
+python replace_code_symbol.py src/file.ts "myFunction" --code "new code" --dry-run
+
+# Apply replace (auto backup .bak)
+python replace_code_symbol.py src/file.ts "myFunction" --code "new code"
 ```
 
-The tool is **required by default** — no need to add to `tools.allow`!
+### 4. Auto Consolidate
 
-### Optional: Custom Project Root
-```json5
-"super-agent": {
-  enabled: true,
-  config: {
-    projectRoot: "/home/user/projects/my-app",
-  },
-}
-```
-
----
-
-## 🚀 Usage
-
-### As an Agent (LLM)
-When you mention a file path in your message:
-
-```text
-User: Fix the error in src/services/llm.service.ts
-```
-
-The **Context Engine** automatically injects:
-```
-📋 FILE MAP: src/services/llm.service.ts
-   Size: 16879 bytes, 513 lines
-
-🔗 Imports (8):
-   📦 External: axios
-   📁 Local: ../utils/logger → getLogger
-   📁 Local: ../utils/retry → withRetry
-
-📊 Declarations (10):
-   ⚡ callDeepSeek(system, user, options?): Promise<LLMResponse>
-   ⚡ callGeminiVision(imageBuffer, prompt): Promise<string>
-```
-
-Then the LLM can call the tool to get the full body:
-
-```text
-read_code_symbol(filePath="src/services/llm.service.ts", symbolName="callDeepSeek", mode="smart")
-```
-
-### Extraction Modes Example
-
-```typescript
-// mode: "signature" → 302 chars (98% savings)
-async callDeepSeek(
-  systemPrompt: string,
-  userContent: string,
-  options?: { model?: string; temperature?: number; ... }
-): Promise<LLMResponse>;
-
-// mode: "full" → 16,879 chars (full function body)
-async callDeepSeek(systemPrompt: string, userContent: string, ...) {
-  // ... 150 lines of code
-}
-
-// mode: "smart" → auto-selects based on body length
-```
-
----
-
-## 🔧 Development
-
-### Prerequisites
-- Node.js 22+
-- OpenClaw 2026.5.17+
-
-### Setup
-```bash
-git clone https://github.com/thetime1102/super-agent-plugin.git
-cd super-agent-plugin
-npm install
-```
-
-### Build
-```bash
-npm run build
-```
-Compiles TypeScript → `dist/` and copies WASM grammar files.
-
-### Test
-```bash
-node tests/test-core.mjs           # 45 core tests
-node tests/test-integration.mjs    # 26 integration tests with fixtures
+```powershell
+python auto-consolidate.py --source webhook --context code:dev
 ```
 
 ---
 
 ## 🏗️ Architecture
 
+### Event-Driven Pipeline
+
 ```
-super-agent-plugin/
-├── src/
-│   ├── index.ts                 ← Plugin entry point
-│   ├── repo-mapper.ts           ← File analysis + symbol extraction
-│   ├── extractor.ts             ← Smart content extraction (3 modes)
-│   ├── parsers/
-│   │   └── index.ts             ← Multi-language parser registry (lazy-load)
-│   └── rag/
-│       ├── index.ts             ← Public API barrel
-│       ├── types.ts             ← Shared types (CodeChunk, IndexEntry)
-│       ├── embedder.ts          ← API Embedding client + cosine similarity
-│       ├── store.ts             ← JSON vector index on disk
-│       ├── indexer.ts           ← Project scanner + chunker + embedder
-│       └── search.ts            ← Query → embed → similarity → results
-├── scripts/
-│   └── copy-wasm.mjs            ← Build-time WASM copy
-├── tests/
-│   ├── test-core.mjs            ← Core functionality tests
-│   ├── test-integration.mjs     ← Integration tests
-│   └── fixtures/                ← Sample test files
-├── dist/                        ← Output: JS + WASM grammars
-│   ├── index.js
-│   ├── repo-mapper.js
-│   ├── extractor.js
-│   ├── parsers/index.js
-│   └── *.wasm (x6)
-├── openclaw.plugin.json         ← Plugin manifest
-└── package.json
+git commit
+    ↓ (async, ~420ms)
+code-scanner.py
+    ↓
+┌─ Layer 1: ESLint --format json (syntax/style)
+├─ Layer 2: DeepSeek Chain-of-Thought (logic bugs)
+│   └─ graph_reverse_deps() → Graph-RAG (cross-file)
+├─ Layer 3: auto-consolidate.py (memory save)
+└─ Report → .scan_report.json → OpenClaw session ping
 ```
 
-### Data Flow
+### Graph-RAG Flow
 
-#### Code Understanding Flow
 ```
-User mentions file path in message
-  │
-  ▼ Context Engine assemble()
-  ├─ detectFileReferences() → regex + path matching
-  ├─ mapFile() → Tree-sitter AST → imports + declarations
-  └─ inject systemPromptAddition
+git diff → changed files (anchor points)
+    ↓
+resolve_imports() → local imports + exports
+    ↓
+graph_reverse_deps() → parse graph.json (1804 nodes, 3796 edges)
+    ├─ Forward: file calls what
+    └─ Reverse: what calls file (max depth=3)
+    ↓
+build_cross_file_context() → token-safe context
+    ↓
+DeepSeek CoT prompt → logic bug analysis
+```
+
+### Safety Guards
+
+| Guard | Value | Description |
+|-------|-------|-------------|
+| **MAX_TRACE_DEPTH** | 3 | Ngăn vòng lặp vô tận khi trace dependencies |
+| **MAX_CONTEXT_TOKENS** | 8000 | Cắt context → signature-only nếu vượt quá |
+| **Post-parse validation** | ✅ | replace_code_symbol reject nếu syntax sai |
+| **Auto backup** | ✅ | `.bak` trước mọi write operation |
+| **Dry-run mode** | ✅ | Xem diff trước, không chạm file |
+
+---
+
+## 🔬 Live Test: Cross-File Impact Analysis
+
+Kịch bản: Đổi `getSystemSetting` return type từ `string` → `object`
+
+```
+Graph-RAG phát hiện:
+  3 reverse deps: storage-config, caption-service, auto-post-cron
+  6 direct callers: dashboard.service, system-config, api-client...
   
-  ▼ LLM reads file map
-  ├─ sees available symbols
-  └─ calls read_code_symbol(file, symbol, mode)
-  
-  ▼ Tool executes
-  ├─ Lazy-load grammar (cached after first use)
-  ├─ Parse file with Tree-sitter
-  └─ Return extracted body (full / signature / smart)
-```
-
-#### Semantic Search Flow
-```
-User: "Find the function that handles Momo payment"
-  │
-  ▼ semantic_search(query, topK=5)
-  ├─ Embed query via API → vector (1536d)
-  ├─ Cosine similarity against indexed symbols
-  └─ Return top matches
-  
-  ▼ LLM reads results
-  ├─ sees: src/services/payment.ts → processMomoPayment
-  └─ calls read_code_symbol("payment.ts", "processMomoPayment")
-
-Index (pre-built):
-  ┌─────────────┐    ┌──────────┐    ┌──────────────┐
-  │ Scan project │───▶│ Chunk &  │───▶│ API Embed    │
-  │ (walk dirs)  │    │ Extract  │    │ + store JSON │
-  └─────────────┘    └──────────┘    └──────────────┘
-```
-
-### Supported Languages
-| Extension | Language | Parser |
-|-----------|----------|--------|
-| `.ts`, `.mts`, `.cts` | TypeScript | `tree-sitter-typescript` |
-| `.tsx`, `.jsx` | TSX / JSX | `tree-sitter-tsx` |
-| `.js`, `.mjs`, `.cjs` | JavaScript | Reuses TypeScript parser |
-| `.py` | Python | `tree-sitter-python` |
-| `.json` | JSON | `tree-sitter-json` |
-| `.css` | CSS | `tree-sitter-css` |
-
-### Semantic Search (RAG)
-
-#### Prerequisites
-- OpenAI-compatible embedding API key (set `embeddingApiKey` in plugin config)
-
-#### Indexing a Project
-```bash
-EMBEDDING_API_KEY=sk-... node scripts/reindex.mjs /path/to/your/project
-```
-
-The indexer will:
-1. Walk the project directory (skipping `node_modules`, `.git`, `dist`, etc.)
-2. Parse each source file with Tree-sitter
-3. Extract all named symbols (functions, classes, interfaces, types, consts)
-4. Generate embeddings via API
-5. Save to `.rag-index.json`
-
-#### Querying
-Once indexed, the LLM can search using natural language:
-```text
-semantic_search(query: "hàm xử lý thanh toán Momo", topK: 5)
-```
-
-Results include:
-- File path + symbol name
-- Match score (%)
-- Signature preview
-- Suggested `read_code_symbol` command for detail
-
----
-
-## 🧪 Test Suite
-
-```
-Core Tests (45 tests):
-  ✓ Plugin import & registration
-  ✓ detectFileReferences (16 path patterns)
-  ✓ mapFile + readCodeSymbol parsing
-  ✓ Error handling & edge cases
-  ✓ Plugin structure validation
-
-Integration Tests (26 tests):
-  ✓ Full file analysis with sample fixtures
-  ✓ Symbol extraction (function, class, interface, type)
-  ✓ Class method detection
-  ✓ Empty file handling
-```
-
-Run tests:
-```bash
-node tests/test-core.mjs
-node tests/test-integration.mjs
+Impact: 6 callers sẽ break type nếu thay đổi return type
+Depth=3 guard: chặn trace vượt quá 3 tầng
+Token guard: context < 8000 tokens
 ```
 
 ---
 
-## 🐛 Known Issues & Bug Tracking
+## 📂 File Structure
 
-All bugs are tracked on [GitHub Issues](https://github.com/thetime1102/super-agent-plugin/issues):
+```
+📁 super-agent-plugin/
+├── super_agent.py            # Auto-indexing engine + Hybrid Search
+├── super-agent.ps1           # PowerShell CLI wrapper
+├── code-scanner.py           # 3-Layer Proactive Scanner (ESLint + CoT + Graph-RAG)
+├── replace_code_symbol.py    # Tree-sitter AST code surgery
+├── auto-consolidate.py       # Event-driven memory consolidation
+├── safe-push.ps1             # PowerShell-safe git push wrapper
+├── ROADMAP.md                # Phase plan
+└── README.md                 # This file
+```
 
-| Bug | Status | Description |
-|-----|--------|-------------|
-| #1 | ✅ Fixed | Manifest missing from npm files |
-| #2 | ✅ Fixed | WASM_DIR resolve fails |
-| #3 | ✅ Fixed | Context engine not in contracts |
-| #4 | ✅ Fixed | No retry on WASM init failure |
-| #5 | ✅ Fixed | Root path resolution fails |
-| #6 | ✅ Fixed | detectFileReferences too narrow |
-| #7 | ✅ Fixed | ConfigSchema empty |
-| #8 | ✅ Fixed | No Windows backslash support |
-| #9 | ✅ Fixed | projectRoot cached in closure |
-| #10 | ✅ Fixed | Silent error swallowing |
-| #11 | ✅ Fixed | False positive bare word matches |
+## 🔗 Related
 
-**Test Coverage:** 115 tests (45 core + 26 integration + 44 RAG)
-
----
-
-## 📄 License
-
-MIT © [Nhat Vi Cake Team](https://github.com/thetime1102)
-
----
-
-<p align="center">
-  Built with ❤️ for the OpenClaw ecosystem
-  <br />
-  <a href="https://github.com/thetime1102/super-agent-plugin/issues">Report Bug</a>
-  ·
-  <a href="https://github.com/thetime1102/super-agent-plugin/issues">Request Feature</a>
-</p>
+- [NHAT VI CAKE Ecosystem](https://github.com/thetime1102/nhatvi-ecosystem-dev)
+- [sqlite-memory](https://github.com/sqliteai/sqlite-memory)
+- [Tree-sitter](https://tree-sitter.github.io/)
