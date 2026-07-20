@@ -1,13 +1,10 @@
 # 🚀 Super Agent v3 — Roadmap
 
-> Trạng thái: **Phase 1 đang phát triển** | Cập nhật: 2026-07-20
+> Trạng thái: **Phase 1 ✅ | Phase 2+3 ✅ | Phase 4 ⏳** | Cập nhật: 2026-07-20
 
 ---
 
-## Phase 1: Hybrid Search (Vector + AST) ⏳ Đang làm
-
-### Mục tiêu
-Khi có task fix bug, tự động: query → vector search → graphify explain → kết quả chính xác với context.
+## Phase 1: Hybrid Search (Vector + AST) ✅ Hoàn thành
 
 ### Kiến trúc
 
@@ -21,134 +18,133 @@ User Query ("auto post worker crash")
   3. Lấy file paths từ sa_chunks mapping
        ↓
   4. Graphify explain từng file để lấy function signatures
-       ↓
-  5. Kết hợp: "File X chứa hàm Y liên quan đến query, graphify cho thấy nó gọi Z"
 ```
 
-### Kỹ thuật
-
-| Component | Chi tiết |
-|-----------|----------|
-| **Embedding** | `memory_add_text(query, 'sys_search')` → embed → `memory_delete(hash)` cleanup |
-| **Similarity** | Python `struct.unpack('768f', blob)` → cosine similarity |
-| **File mapping** | `sa_chunks(mem_hash → file_path)` join với vector results |
-| **Graphify hook** | `graphify explain <file> --graph graphify-out/graph.json` |
-| **Hybrid fallback** | Vector top 5 + FTS keyword top 5 → merge & dedup |
-
-### Files cần sửa
-
-- `super_agent.py`: thêm `hybrid_search()`, cập nhật `search()` command
-- `super-agent.ps1`: thêm flag `--vector` / `--hybrid`
-
-### Validation
+### Commands
 
 ```powershell
-super-agent search "auto post worker facebook" --vector
-# Output: top 5 files kèm similarity score + graphify explain
+super-agent search "auto post worker" --vector         # Hybrid search
+super-agent search "worker crash" --vector --graphify   # + AST explain
 ```
+
+### Files
+
+| File | Chức năng |
+|------|-----------|
+| `super_agent.py` | `hybrid_search()`, `_cosine_sim()`, `_graphify_explain()` |
 
 ---
 
-## Phase 2: Auto Memory Consolidation ⏳ Chờ
+## Phase 2+3: Event-Driven Auto Consolidation ✅ Hoàn thành
 
-### Mục tiêu
-Cron 00:00 mỗi ngày: đọc daily notes → LLM phân loại → JSON → SQLite. Không còn ghi tay MEMORY.md.
-
-### Kiến trúc
+### Kiến trúc (Merged — Real-time, không cron 00:00)
 
 ```
-00:00 Cron trigger
-       ↓
-  1. Đọc memory/YYYY-MM-DD.md (hôm qua)
-  2. Đọc sa_filemap (files changed hôm qua)
-  3. LLM summarize thành 3 categories:
-     - bugs: lỗi đã fix
-     - config: cấu hình thay đổi  
-     - features: tính năng mới
-  4. Lưu vào SQLite bảng memory_consolidation (JSON)
-  5. Update MEMORY.md tóm tắt
+[Git Commit]          [GitHub Push]           [Cron 5 phút]
+     │                     │                       │
+     ▼                     ▼                       ▼
+Post-commit hook    Webhook (Gateway)          Poll git log mới
+     │                     │                       │
+     └─────────────────────┼───────────────────────┘
+                           ▼
+              auto-consolidate.py
+                           │
+              ┌────────────┼────────────┐
+              ▼            ▼            ▼
+        1. git diff    2. Phân loại   3. Lưu vào
+           + index       heuristic       SQLite + alert
+              (bugs/config/features)
 ```
 
-### Database
+### Trigger Sources
+
+| Source | Delay | Mechanism |
+|--------|-------|-----------|
+| **Git commit (local)** | Real-time (< 1s) | Post-commit hook → `auto-consolidate.py --source webhook` |
+| **GitHub push** | ~5 phút | Cron `super-agent-consolidate` mỗi 300s check git log |
+| **Gateway webhook** | Real-time (future) | Webhooks plugin + Cloudflare tunnel |
+
+### Database Schema
 
 ```sql
-CREATE TABLE memory_consolidation (
-    date TEXT PRIMARY KEY,
-    bugs JSON DEFAULT '[]',
-    config_changes JSON DEFAULT '[]',
-    features JSON DEFAULT '[]',
-    lessons JSON DEFAULT '[]',
-    decisions JSON DEFAULT '[]',
+-- File: memory/consolidation.db
+CREATE TABLE consolidation (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    category TEXT NOT NULL CHECK(category IN ('bug','config','feature','lesson','decision')),
+    title TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    files_affected TEXT DEFAULT '[]',
+    severity TEXT DEFAULT 'info' CHECK(severity IN ('critical','warning','info')),
+    source TEXT DEFAULT 'auto' CHECK(source IN ('auto','manual','webhook')),
+    commit_sha TEXT DEFAULT '',
     created_at INTEGER DEFAULT (unixepoch())
 );
+
+-- Tracking: consolidation_tracking(key, value) — lưu last_processed_sha
 ```
 
-### LLM Prompt
+### Classification Heuristic (không cần LLM API)
 
+| Commit message contains | Category | Severity |
+|------------------------|----------|----------|
+| `fix`, `bug`, `hotfix`, `crash`, `rollback` | `bug` | `critical` nếu crash/rollback |
+| `config`, `env`, `setting`, `migration` | `config` | `warning` nếu migration |
+| `feat`, `feature`, `add`, `new`, `create` | `feature` | `info` |
+| `docs`, `readme`, `comment` | `feature` | `info` |
+
+### Files
+
+| File | Chức năng |
+|------|-----------|
+| `auto-consolidate.py` | Consolidation engine: git diff → classify → save |
+| `.git/hooks/post-commit` | Gọi auto-consolidate --source webhook sau mỗi commit |
+| Cron job | `super-agent-consolidate` mỗi 300s (5 phút) |
+
+### GitHub Webhook Setup (Future — khi Gateway public)
+
+1. Bật webhooks plugin trong `openclaw.json`:
+```json5
+"plugins": {
+  "entries": {
+    "webhooks": {
+      "enabled": true,
+      "config": {
+        "routes": {
+          "consolidate": {
+            "path": "/plugins/webhooks/consolidate",
+            "sessionKey": "agent:main:main",
+            "secret": { "source": "env", "provider": "default", "id": "SUPER_AGENT_WEBHOOK_SECRET" },
+            "description": "GitHub webhook → auto consolidation"
+          }
+        }
+      }
+    }
+  }
+}
 ```
-Từ daily log dưới đây, phân loại thành:
-1. Bugs đã fix (mô tả + file + nguyên nhân)
-2. Cấu hình thay đổi (key + giá trị cũ + mới)
-3. Tính năng mới (mô tả + files affected)
-4. Bài học (lesson learned)
-5. Quyết định kiến trúc
-
-Log: {daily_notes_content}
-```
-
-### Files cần tạo
-
-- `auto-consolidate.py` — cron worker script
-- `cron job` — `super-agent-consolidate` daily 00:00
+2. GitHub repo → Settings → Webhooks → Add webhook:
+   - Payload URL: `https://<tunnel-url>/plugins/webhooks/consolidate`
+   - Content type: `application/json`
+   - Secret: `SUPER_AGENT_WEBHOOK_SECRET`
+   - Events: `Push`, `Workflow runs`
 
 ---
 
-## Phase 3: CI/CD Monitor ⏳ Chờ
-
-### Mục tiêu
-Git push dev → webhook → tự động git diff + graphify check → cảnh báo lỗi trước deploy.
-
-### Kiến trúc
-
-```
-GitHub Push (webhook)
-       ↓
-  POST /webhook/super-agent (port 18789 or Gateway route)
-       ↓
-  1. git diff --name-only HEAD~1..HEAD
-  2. Với mỗi file thay đổi:
-     - graphify explain → check dependencies
-     - super-agent search "tên hàm cũ" → detect breaking changes
-  3. Nếu phát hiện:
-     - API response format thay đổi
-     - Function signature thay đổi
-     - DB schema thay đổi mà không có migration
-  4. Alert qua Telegram
-```
-
-### Rules
-
-| Rule | Pattern | Hành động |
-|------|---------|-----------|
-| API breaking | `res.json({...})` thay đổi key | WARN + suggest frontend update |
-| Schema drift | Thêm/xoá column mà không có migration | BLOCK |
-| Import missing | File xoá export mà file khác import | BLOCK |
-| Config change | `.env` thay đổi | INFO + review |
-
-### Files cần tạo
-
-- `ci-monitor.py` — webhook handler + analyzer
-- GitHub webhook config → Gateway route
-
----
-
-## Phase 4: MCP Server (Future)
+## Phase 4: MCP Server (Future ⏳)
 
 ### Mục tiêu
 Isolated session có thể gọi `super-agent search` qua MCP thay vì exec shell.
 
 ### Ý tưởng
+
 ```python
 # super_agent_mcp.py — MCP server wrapping super_agent functions
 # Session A: "search token budget" → MCP call → result → context
 ```
+
+### Use cases
+
+- Cron job dùng MCP call thay vì exec PowerShell
+- Cross-session memory sharing
+- Agent trong Telegram có thể search memory
