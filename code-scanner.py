@@ -34,6 +34,16 @@ GRAPHIFY_OUT = os.path.join(DEV_DIR, "graphify-out", "graph.json")
 REPORT_DIR = os.path.join(WORKSPACE, "memory")
 REPORT_FILE = os.path.join(REPORT_DIR, ".scan_report.json")  # Temp, se ghi de boi hash
 
+# --- Pattern Store (Few-shot Learning) ---
+sys.path.insert(0, SUPER_AGENT_DIR)
+try:
+    from pattern_store import PatternStore
+    _pattern_store = PatternStore()
+    HAS_PATTERN_STORE = True
+except ImportError:
+    _pattern_store = None
+    HAS_PATTERN_STORE = False
+
 # --- Safety Guards ---
 MAX_TRACE_DEPTH = 3
 MAX_CONTEXT_TOKENS = 8000  # Neu vuot qua, chi lay function signatures
@@ -466,8 +476,27 @@ def analyze_logic_with_context(diff_text: str, changed_files: list[str], api_key
     kept_tokens = _estimate_tokens(context_summary)
     print(f"   [COT] Context: {raw_tokens} tokens -> truncated to {kept_tokens} (max {MAX_CONTEXT_TOKENS})")
 
+    # Step 4.5: Few-shot Learning — search VERIFIED_PATTERNs tuong tu
+    few_shot_prompt = ""
+    if HAS_PATTERN_STORE and _pattern_store:
+        try:
+            # Build query tu diff + file names
+            query_parts = [os.path.basename(f) for f in changed_files[:3]]
+            query_parts.append(diff_text[:500])
+            query = " ".join(query_parts)
+            patterns = _pattern_store.search_similar(query, top_k=3, min_score=0.12)
+            if patterns:
+                few_shot_prompt = _pattern_store.build_few_shot_examples(patterns)
+                print(f"   [Few-shot] Found {len(patterns)} VERIFIED_PATTERNs from past fixes")
+            else:
+                print("   [Few-shot] No similar patterns found")
+        except Exception as e:
+            print(f"   [Few-shot] Error: {e}")
+
     # Step 5: Chain-of-Thought prompt
     prompt = f"""You are analyzing a code diff with cross-file context.
+
+{few_shot_prompt}
 
 DIFF (the actual changes):
 ```typescript

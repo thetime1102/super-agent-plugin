@@ -24,3 +24,7 @@ npm-debug.log*
 # Temp
 tmp/
 temp/
+
+__pycache__/
+consolidation.db
+*.db
