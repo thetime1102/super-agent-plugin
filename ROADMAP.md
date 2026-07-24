@@ -1,6 +1,6 @@
 # 🚀 Super Agent v3 — Roadmap
 
-> Trạng thái: **Phase 1 ✅ | Phase 2+3 ✅ | Phase 4 ✅ | Phase 5 ✅ | Phase 6 ✅ | Phase 7 🚧** | Cập nhật: 2026-07-24
+> Trạng thái: **Phase 1 ✅ | Phase 2+3 ✅ | Phase 4 ✅ | Phase 5 ✅ | Phase 6 ✅ | Phase 7 ✅** | Cập nhật: 2026-07-24
 
 ---
 
@@ -284,22 +284,62 @@ Iter 2: Planner (có feedback) → Coder (thêm rollback) → Reviewer APPROVED 
 
 ---
 
-## Phase 7: CI/CD Auto-Fix Pipeline 🚧 (Future)
+## Phase 7: CI/CD Auto-Fix Pipeline ✅ HOÀN THÀNH (2026-07-24)
 
-### Mục tiêu
-Tự động trigger multi-agent orchestrator khi GitHub Actions CI fail → phân tích log → apply fix → push commit → re-run CI.
+### Kiến trúc Production-Ready
 
-### Thiết kế
 ```
-[CI Fail Webhook]
-  ↓
-webhook_handler.py
-  ↓
-multi_agent_orchestrator.run_orchestrator(fetch_logs())
-  ↓
-Planner → Coder → Reviewer
-  ↓
-Auto-commit + Push
-  ↓
-CI Re-run (max 3 attempts)
+[GitHub Actions FAIL] -- webhook POST --> [Cloudflare Tunnel]
+       --> [Gateway] --> [webhook_handler.py]
+            1. parse_workflow_run()
+               - Filter workflow_run + conclusion=failure
+               - Ignore auto-fix/ branches (infinite loop guard)
+            2. fetch_github_action_logs()
+               - gh run view --log-failed (primary)
+               - gh run view --log (fallback)
+               - Smart error extraction via regex
+               - Hard cap MAX_LOG_CHARS
+            3. _save_pending_fix() -> SQLite pending_fixes.db
+            4. multi_agent_orchestrator.run_orchestrator(bug_report)
+            5. Nếu APPROVED:
+               - git worktree add (cach ly tung run_id)
+               - git checkout -b auto-fix/run-<id> (trong worktree)
+               - git add + git commit + git push
+               - gh pr create
+               - git worktree remove (try/finally)
+            6. CI SUCCESS webhook:
+               - _lookup_pending_fix(branch) -> lay context
+               - _pattern_store.record_fix() -> VERIFIED_PATTERN
 ```
+
+### Production Guards
+
+| # | Guard | File | Mô tả |
+|---|-------|------|-------|
+| 1 | **Git Worktree Isolation** | `create_auto_fix_pr()` | Mỗi run_id dùng `git worktree` riêng → tránh race condition Git index.lock |
+| 2 | **Infinite Loop Guard** | `parse_workflow_run()` | Ignore auto-fix/ branches → không trigger lại CI trên fix branch |
+| 3 | **Deferred Verification** | `process_webhook()` success | VERIFIED_PATTERN chỉ ghi khi CI **pass thật sự**, không ghi khi tạo PR |
+| 4 | **Smart Error Extraction** | `_extract_error_context()` | Regex tìm Error:/Exception/Failed → lấy ±30 dòng context → hard cap |
+| 5 | **SQLite Pending Fix** | `_save/lookup/update_pending_fix()` | Lưu context fix vào DB → khôi phục khi CI SUCCESS webhook đến |
+| 6 | **Stale Worktree Cleanup** | `_cleanup_stale_worktrees()` | Dọn worktree tồn đọng khi daemon start (phòng crash) |
+| 7 | **Hard Cap** | `fetch_github_action_logs()` | Cắt cứng output cuối theo MAX_LOG_CHARS → bảo vệ token cache |
+
+### Files
+
+| File | Chức năng |
+|------|-----------|
+| `scripts/webhook_handler.py` | Webhook receiver + CI/CD Auto-Fix pipeline (Phase 7) |
+| `multi_agent_orchestrator.py` | Orchestrator loop: Planner→Coder→Reviewer (Phase 6) |
+| `pattern_store.py` | VERIFIED_PATTERN learning engine (Phase 4) |
+
+### Environment Variables
+
+| Var | Default | Mô tả |
+|-----|---------|-------|
+| `GIT_REMOTE` | `origin` | Git remote name |
+| `GIT_BASE_BRANCH` | `dev` | Base branch for auto-fix |
+| `MAX_LOG_CHARS` | `3000` | Max chars for error log extraction |
+| `GITHUB_REPOSITORY` | `thetime1102/nhatvi-ecosystem-dev` | Default repo |
+| `GITHUB_TOKEN` | — | GitHub token (fallback: `GITHUB_PERSONAL_ACCESS_TOKEN`, `GH_TOKEN`) |
+| `LOG_ENCODING` | `utf-8` | Git/gh output encoding |
+| `GIT_BASE_BRANCH` | `dev` | Nhánh base để tạo auto-fix branch |

@@ -25,6 +25,7 @@
 | **🤖 Multi-Agent Orchestrator** | `multi_agent_orchestrator.py` | Pipeline Planner→Coder→Reviewer: tự động fix lỗi bằng PatternStore + Tree-sitter + DeepSeek QA |
 | **🌐 MCP Server** | `super_agent_mcp.py` | MCP over stdio: expose search_memory + search_verified_patterns cho AI Client |
 | **🔒 Safe Push** | `safe-push.ps1` | PowerShell-safe git commit+push wrapper |
+| **🌐 Webhook Handler** | `scripts/webhook_handler.py` | CI/CD Auto-Fix: webhook → fetch log → orchestrator → auto-fix PR |
 
 ---
 
@@ -83,6 +84,22 @@ python replace_code_symbol.py src/file.ts "myFunction" --code "new code"
 
 ```powershell
 python auto-consolidate.py --source webhook --context code:dev
+```
+
+### 5. Webhook Handler — CI/CD Auto-Fix (Phase 7)
+
+```powershell
+# Daemon mode (dang sau Cloudflare Tunnel)
+python scripts/webhook_handler.py --daemon --port 11999 --secret super-secret
+
+# Health check
+python scripts/webhook_handler.py --health
+
+# Manual test
+python scripts/webhook_handler.py --test-event workflow_run --test-conclusion failure
+
+# Fetch logs for a specific run
+python scripts/webhook_handler.py --fetch-logs thetime1102/nhatvi-ecosystem-dev 12345
 ```
 
 ---
@@ -151,6 +168,47 @@ DeepSeek CoT prompt → logic bug analysis
 | **Auto backup** | ✅ | `.bak` trước mọi write operation |
 | **Dry-run mode** | ✅ | Xem diff trước, không chạm file |
 
+### Webhook Daemon — Production Guards (Phase 7)
+
+| Guard | Mô tả |
+|-------|-------|
+| **Git Worktree Isolation** | Mỗi `run_id` dùng `git worktree` riêng → tránh race condition Git |
+| **Infinite Loop Guard** | Bỏ qua sự kiện trên branch `auto-fix/` → không trigger lại CI |
+| **Deferred Verification** | `VERIFIED_PATTERN` chỉ ghi khi CI **pass thật sự**, không ghi khi tạo PR |
+| **Smart Error Extraction** | Regex tìm `Error:`, `Exception`, `Failed at` thay vì blind tail truncation |
+| **SQLite Pending Fix** | Lưu context fix vào `pending_fixes.db` → khôi phục khi success webhook đến |
+| **Stale Worktree Cleanup** | Dọn worktree còn sót khi khởi động daemon |
+| **Hard Cap** | `MAX_LOG_CHARS` cắt cứng output cuối → bảo vệ token cache |
+
+### Webhook Daemon Flow
+
+```
+[GitHub Actions FAIL] -- webhook POST --> [Cloudflare Tunnel]
+       --> [Gateway] --> [webhook_handler.py]
+            1. parse_workflow_run()
+               - Lọc workflow_run + conclusion=failure
+               - Ignore auto-fix/ branches (infinite loop guard)
+            2. fetch_github_action_logs(repo, run_id)
+               - gh run view --log-failed (primary)
+               - gh run view --log (fallback)
+               - Smart error extraction (regex)
+               - Hard cap MAX_LOG_CHARS
+            3. _save_pending_fix() -> SQLite (context persistence)
+            4. multi_agent_orchestrator.run_orchestrator(bug_report)
+               - Planner -> Coder -> Reviewer (max 3 iterations)
+            5. Nếu APPROVED:
+               - git worktree add (cach ly tung run_id)
+               - git checkout -b auto-fix/run-<id>
+               - git add + git commit
+               - git push origin auto-fix/run-<id>
+               - gh pr create
+               - git worktree remove (try/finally cleanup)
+            6. CI SUCCESS webhook (auto-fix branch)
+               - _lookup_pending_fix(branch) -> lay context
+               - _pattern_store.record_fix() -> VERIFIED_PATTERN
+               - _update_pending_fix_status('ci_passed')
+```
+
 ---
 
 ## 🔬 Live Test: Cross-File Impact Analysis
@@ -184,7 +242,10 @@ Token guard: context < 8000 tokens
 ├── auto-consolidate.py               # Event-driven memory consolidation
 ├── safe-push.ps1                     # PowerShell-safe git push wrapper
 ├── ROADMAP.md                        # Phase plan
-└── README.md                         # This file
+├── README.md                         # This file
+└── scripts/
+    ├── webhook_handler.py            # CI/CD Auto-Fix Webhook Bridge (Phase 7)
+    └── mcp_test_runner.py            # MCP stdio client test script
 ```
 
 ## 🔗 Related
