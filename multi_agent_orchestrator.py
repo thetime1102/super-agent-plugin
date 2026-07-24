@@ -248,6 +248,7 @@ Quy tắc:
 4. Nếu đề cập memory/leak/OOM, dùng MEMORY_OPTIMIZE.
 5. Nếu cần rollback, set add_transaction=true.
 6. Nếu cần giới hạn concurrent, set concurrency_limit=số.
+7. **BẮT BUỘC:** files phải là mảng chứa đường dẫn file cần sửa. Nếu bug_report có tên file (VD: test-e2e.js), phải đưa vào files.
 """
 
 
@@ -325,6 +326,24 @@ def run_planner(state: AgentState) -> AgentState:
             "add_transaction": False,
             "concurrency_limit": None,
         }
+
+    # Fallback: extract file paths từ error context nếu files rỗng
+    if not fix_plan.get("files"):
+        report = state.get("bug_report", "")
+        # Tìm file paths trong error log (VD: at file.ts:42, test-e2e.js)
+        file_matches = re.findall(
+            r"""(?:\.\/|\/)?[-_a-zA-Z0-9]+(?:\.[a-zA-Z]+)(?=\s|:|\(|\n|$)""",
+            report
+        )
+        # Lọc bỏ trùng, bỏ file hệ thống
+        seen = set()
+        for f in file_matches:
+            ext = os.path.splitext(f)[1].lower()
+            if ext in (".js", ".ts", ".tsx", ".jsx", ".py", ".json") and f not in seen:
+                seen.add(f)
+                fix_plan["files"].append(f)
+        if fix_plan["files"]:
+            print(f"  [Fallback] Extracted files: {', '.join(fix_plan['files'])}")
 
     state["fix_plan"] = fix_plan
     print(f"[PlannerAgent] Fix Plan: {fix_plan['strategy']}")
