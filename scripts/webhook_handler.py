@@ -213,9 +213,10 @@ def _log(msg: str, level: str = "INFO") -> None:
 
 
 def _run_git(cmd: list[str], cwd: str = _PROJECT_DIR, capture: bool = True) -> subprocess.CompletedProcess:
-    _log(f"git {' '.join(shlex.join(c) for c in cmd)}", "CMD")
+    full_cmd = ["git"] + cmd
+    _log(f"git {' '.join(c if ' ' not in c else shlex.join([c]) for c in cmd)}", "CMD")
     result = subprocess.run(
-        cmd, cwd=cwd, capture_output=capture, text=True,
+        full_cmd, cwd=cwd, capture_output=capture, text=True,
         encoding=_LOG_ENCODING, errors="replace", timeout=60,
     )
     if result.returncode != 0:
