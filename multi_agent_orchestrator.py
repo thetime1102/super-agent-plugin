@@ -441,6 +441,18 @@ def run_coder(state: AgentState) -> AgentState:
         else:
             print(f"    [--] No symbols were replaced in {filepath}")
 
+        # ── GENERIC_FIX fallback: goi DeepSeek de sinh code fix that ──
+        if not applied_any and strategy == "GENERIC_FIX":
+            bug_report = state.get("bug_report", "")
+            try:
+                print(f"    [DeepSeek Fix] Attempting DeepSeek code generation...")
+                fixed_code = _deepseek_generate_fix(abs_path, bug_report, fix_plan)
+                if _apply_deepseek_fix(abs_path, filepath, fixed_code, strategy):
+                    applied_any = True
+                    print(f"    [OK] Applied DeepSeek-generated fix to {filepath}")
+            except Exception as e:
+                print(f"    [DeepSeek Fix] Failed: {e}")
+
     print(f"  [OK] Hoan thanh: {summary}")
     print()
     return state
@@ -566,6 +578,145 @@ def _text_replace_fallback(filepath: str, strategy: str, symbol: str) -> None:
 
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(new_content)
+
+
+def _deepseek_generate_fix(filepath: str, bug_report: str, fix_plan: dict) -> str:
+    """
+    Goi DeepSeek de sinh code fix cho file.
+    Dung cho GENERIC_FIX strategy (syntax errors, missing brackets, etc.)
+
+    Args:
+        filepath: Duong dan tuyet doi den file can sua
+        bug_report: Bug report tu CI log
+        fix_plan: Dict tu Planner
+
+    Returns:
+        String chua toan bo noi dung file da duoc fix
+
+    Raises:
+        RuntimeError: Neu DeepSeek khong san sang hoac API call that bai
+    """
+    api_key = _get_deepseek_key()
+    if not api_key or not HAS_REQUESTS:
+        raise RuntimeError("DeepSeek not available for code generation")
+
+    content = _safe_read(filepath)
+    if not content:
+        raise FileNotFoundError(f"Cannot read {filepath}")
+
+    filename = os.path.basename(filepath)
+    ext = os.path.splitext(filename)[1].lower()
+    lang_map = {".js": "JavaScript", ".ts": "TypeScript", ".tsx": "TypeScript React",
+                ".jsx": "JavaScript React", ".py": "Python", ".json": "JSON",
+                ".css": "CSS", ".html": "HTML", ".yml": "YAML", ".yaml": "YAML"}
+    language = lang_map.get(ext, "code")
+
+    summary = fix_plan.get("summary", "Fix syntax error")
+
+    system_prompt = f"""\
+Ban la CoderAgent — sua loi code dua tren bug report.
+
+File can sua: {filename}
+Ngon ngu: {language}
+Bug report: {summary}
+
+Yeu cau:
+- Phan tich loi trong file code duoi day
+- TRA VE TOAN BO FILE da duoc sua (KHONG tra loi van ban, CHI tra code)
+- Giu nguyen cau truc file, chi sua phan bi loi
+- Neu la syntax error: them ky tu thieu (dong ngoac, ngoac nhon, etc.)
+- Neu la runtime error: sua logic tai dong bi loi
+- Dam bao file van con chay duoc sau khi sua
+- Xuat ra code trong ``` block, KHONG co text thua ben ngoai
+"""
+
+    user_prompt = f"""\
+Bug report tu CI:
+{bug_report[:1500]}
+
+File hien tai ({filename}):
+```
+{content}
+```
+
+Hay sua loi trong file va tra ve TOAN BO file da duoc fix trong ``` block.
+Chi tra ve code, khong co text mo ta.
+"""
+
+    print(f"    [DeepSeek Fix] Calling DeepSeek to fix {filename}...")
+
+    try:
+        resp = _requests.post(
+            "https://api.deepseek.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "deepseek-chat",
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "temperature": 0.05,
+                "max_tokens": 4000,
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        response = data["choices"][0]["message"]["content"].strip()
+
+        # Extract code from ``` block
+        code_match = re.search(r"```(?:\\w+)?\\n?(.*?)```", response, re.DOTALL)
+        if code_match:
+            fixed_code = code_match.group(1).strip()
+        else:
+            fixed_code = response.strip()
+
+        print(f"    [DeepSeek Fix] Response length: {len(response)} chars")
+        print(f"    [DeepSeek Fix] Extracted code length: {len(fixed_code)} chars")
+
+        # Validate: check that code starts/ends similarly (file structure preserved)
+        if len(fixed_code) < len(content) * 0.3:
+            print(f"    [WARN] Fixed code seems too short ({len(fixed_code)} vs {len(content)})")
+            raise RuntimeError("Generated code is too short — likely invalid")
+
+        return fixed_code
+
+    except Exception as e:
+        print(f"    [DeepSeek Fix] API call failed: {e}")
+        raise RuntimeError(f"DeepSeek code generation failed: {e}")
+
+
+def _apply_deepseek_fix(abs_path: str, filepath: str, fixed_code: str, strategy: str) -> bool:
+    """Apply fix code generated by DeepSeek, with .bak backup."""
+    content = _safe_read(abs_path)
+    if not content:
+        return False
+
+    if content == fixed_code:
+        print(f"    [Apply] No changes needed — file is already correct")
+        return False
+
+    # Backup
+    backup_path = abs_path + ".bak"
+    try:
+        shutil.copy2(abs_path, backup_path)
+        print(f"    [Apply] Backup -> {filepath}.bak")
+    except Exception as e:
+        print(f"    [Apply] Backup failed: {e}")
+        return False
+
+    # Write fixed code
+    try:
+        with open(abs_path, "w", encoding="utf-8") as f:
+            f.write(fixed_code)
+        print(f"    [Apply] Written fixed code to {filepath}")
+        return True
+    except Exception as e:
+        print(f"    [Apply] Write failed: {e}")
+        return False
 
 
 # ═══════════════════════════════════════════════════════════════════════════
