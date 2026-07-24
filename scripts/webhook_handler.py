@@ -254,6 +254,48 @@ def _check_git_installed() -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+#  Telegram Alert (ChatOps)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def send_telegram_alert(message: str) -> None:
+    """
+    Send a monitoring alert to Telegram via Bot API.
+
+    Reads TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID from environment.
+    Silently returns if either is missing (safe to call on any server).
+    Uses only Python stdlib (urllib) — no third-party dependencies.
+    """
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        _log("Telegram alert skipped: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set", "DEBUG")
+        return
+
+    try:
+        import urllib.request
+        import urllib.parse
+
+        text = f"🤖 *Auto-Fix CI/CD*\n\n{message}"
+        params = urllib.parse.urlencode({
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": "true",
+        })
+        url = f"https://api.telegram.org/bot{token}/sendMessage?{params}"
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status != 200:
+                _log(f"Telegram API returned HTTP {resp.status}", "WARN")
+    except urllib.error.URLError as e:
+        _log(f"Telegram network error: {e.reason}", "WARN")
+    except ImportError:
+        _log("urllib not available for Telegram alert", "WARN")
+    except Exception as e:
+        _log(f"Telegram alert failed: {e}", "WARN")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 #  A. Pending Fix Database (Fix #5: context persistence)
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -1100,6 +1142,19 @@ def process_webhook(result: dict) -> dict:
                     response["summary"] = (
                         f"CI FAILED -> Auto-fix PR created: {pr_result['pr_url']}"
                     )
+
+                    # ✅ SUCCESS: Alert khi tao PR thanh cong
+                    strategy = fix_plan.get("strategy", "?")
+                    files_summary = ", ".join(fix_plan.get("files", [])[:5])
+                    send_telegram_alert(
+                        f"✅ *Auto-Fix PR Created*\n"
+                        f"Repo: `{repo}`\n"
+                        f"Branch: `{branch_name}`\n"
+                        f"Run: [#{run_id}]({html_url})\n"
+                        f"PR: [{pr_result['pr_url']}]({pr_result['pr_url']})\n"
+                        f"Strategy: `{strategy}`\n"
+                        f"Files: `{files_summary}`"
+                    )
                 else:
                     response["actions_taken"].append(
                         f"PR not created: {pr_result.get('reason', 'unknown')}"
@@ -1118,6 +1173,15 @@ def process_webhook(result: dict) -> dict:
             _log("Orchestrator did not produce a successful fix", "WARN")
             response["actions_taken"].append("Orchestrator failed to produce fix")
             response["summary"] = f"CI FAILED for {branch} — orchestrator could not fix"
+            # ❌ FAILED: Alert khi orchestrator khong tao duoc fix
+            send_telegram_alert(
+                f"❌ *Auto-Fix Failed*\n"
+                f"Repo: `{repo}`\n"
+                f"Branch: `{branch}`\n"
+                f"Run: [#{run_id}]({html_url})\n"
+                f"Status: Orchestrator could not produce a fix\n"
+                f"Workflow: `{workflow}`"
+            )
 
         return response
 
@@ -1168,11 +1232,28 @@ def start_webhook_server(port: int = 11999, secret: str = ""):
                      f"run #{result.get('run_id', '?')} "
                      f"branch={result.get('branch', '?')}")
 
+                # 🚨 TRIGGERED: Alert khi nhan duoc webhook
+                send_telegram_alert(
+                    f"🚨 *Webhook Received*\n"
+                    f"Repo: `{result.get('repo', '?')}`\n"
+                    f"Branch: `{result.get('branch', '?')}`\n"
+                    f"Run: [#{result.get('run_id', '?')}]({result.get('html_url', '')})\n"
+                    f"Conclusion: `{result.get('conclusion', '?')}`\n"
+                    f"Workflow: `{result.get('workflow', '?')}`"
+                )
+
                 try:
                     response = process_webhook(result)
                     status_code = 200
                 except Exception as e:
                     _log(f"Webhook processing error: {e}", "ERROR")
+                    # 💥 CRASH: Alert khi exception bat ngo
+                    send_telegram_alert(
+                        f"💥 *Webhook Processing Crashed*\n"
+                        f"Repo: `{result.get('repo', '?')}`\n"
+                        f"Run: [#{result.get('run_id', '?')}]({result.get('html_url', '')})\n"
+                        f"Error: `{str(e)[:200]}`"
+                    )
                     response = {"processed": False, "error": str(e)[:200]}
                     status_code = 500
 
