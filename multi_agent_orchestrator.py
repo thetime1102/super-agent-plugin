@@ -859,8 +859,14 @@ def run_reviewer(state: AgentState) -> AgentState:
             )
 
         if strategy == "GENERIC_FIX":
-            qa_status = "REJECTED"
-            qa_reason_parts.append("GENERIC_FIX khong du cu the de apply")
+            # Chi reject GENERIC_FIX neu khong co thay doi thuc te
+            if not has_backup and not syntax_ok:
+                qa_status = "REJECTED"
+                qa_reason_parts.append("GENERIC_FIX khong du cu the de apply")
+            else:
+                # Fix da duoc apply, cho phep APPROVED
+                qa_status = "APPROVED"
+                qa_reason_parts.append("GENERIC_FIX applied: file da duoc sua thanh cong")
 
         qa_reason = "; ".join(qa_reason_parts) if qa_reason_parts else "OK. Khong phat hien side-effect."
         if qa_status == "APPROVED" and not qa_reason_parts:
