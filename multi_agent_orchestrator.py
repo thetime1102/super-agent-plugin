@@ -165,13 +165,15 @@ def _mock_deepseek(system_prompt: str, user_prompt: str) -> str:
 
 
 def _find_project_root() -> str:
-    """Tìm project root (nhatvi-ecosystem-dev)."""
+    """Tìm project root."""
     candidates = [
         os.path.join(os.path.dirname(_SCRIPT_DIR), "nhatvi-ecosystem-dev"),
         os.path.join(os.path.dirname(os.path.dirname(_SCRIPT_DIR)), "nhatvi-ecosystem-dev"),
+        os.path.expanduser("~/nhatvicake-core"),   # Linux VM2
+        os.path.expanduser("~/nhatvi-ecosystem-dev"),  # Linux alternative
     ]
     for c in candidates:
-        if os.path.isdir(os.path.join(c, "src")):
+        if os.path.isdir(os.path.join(c, "src")) or os.path.isdir(os.path.join(c, ".git")):
             return c
     return os.path.dirname(_SCRIPT_DIR)
 
