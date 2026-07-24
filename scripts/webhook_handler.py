@@ -220,7 +220,8 @@ def _run_git(cmd: list[str], cwd: str = _PROJECT_DIR, capture: bool = True) -> s
         encoding=_LOG_ENCODING, errors="replace", timeout=60,
     )
     if result.returncode != 0:
-        _log(f"git stderr: {result.stderr[:500]}", "WARN")
+        err = result.stderr[:500] if result.stderr else "(no stderr)"
+        _log(f"git stderr: {err}", "WARN")
     return result
 
 
