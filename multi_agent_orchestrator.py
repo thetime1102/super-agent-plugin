@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
+from __future__ import annotations
 """
 multi_agent_orchestrator.py — Multi-Agent Orchestration Engine (Real Integration)
 ===================================================================================
@@ -14,8 +15,6 @@ Usage:
   from multi_agent_orchestrator import run_orchestrator
   run_orchestrator("Worker crash khi DB write concurrent với image download")
 """
-
-from __future__ import annotations
 
 import io
 import json
@@ -826,3 +825,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

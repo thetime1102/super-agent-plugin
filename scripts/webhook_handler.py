@@ -62,8 +62,20 @@ from typing import Optional
 
 # ─── Paths ────────────────────────────────────────────────────────────────
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_WORKSPACE = r"C:\Users\tqv11\.openclaw\workspace"
-_DEV_DIR = os.path.join(_WORKSPACE, "nhatvi-ecosystem-dev")
+
+# ─── Platform-aware paths (Windows dev vs Linux prod) ──────────────────
+if sys.platform == "win32":
+    _WORKSPACE = r"C:\Users\tqv11\.openclaw\workspace"
+    _DEV_DIR = os.path.join(_WORKSPACE, "nhatvi-ecosystem-dev")
+    _WORKTREE_DIR = os.path.join(_WORKSPACE, "auto-fix-worktrees")
+    _PENDING_DB_DIR = os.path.join(_WORKSPACE, "memory")
+else:
+    # Linux (VM2 Production)
+    _WORKSPACE = os.path.expanduser("~/super-agent")
+    _DEV_DIR = os.path.expanduser("~/nhatvicake-core")
+    _WORKTREE_DIR = os.path.join(_WORKSPACE, "auto-fix-worktrees")
+    _PENDING_DB_DIR = os.path.join(_WORKSPACE, "memory")
+
 _SUPER_AGENT_DIR = os.path.join(_WORKSPACE, "super-agent-plugin")
 sys.path.insert(0, _SUPER_AGENT_DIR)
 
@@ -94,13 +106,12 @@ _AUTO_FIX_REMOTE = _GIT_REMOTE
 _LOG_ENCODING = os.environ.get("LOG_ENCODING", "utf-8")
 _MAX_LOG_CHARS = int(os.environ.get("MAX_LOG_CHARS", "3000"))
 _PROJECT_DIR = _DEV_DIR
-_WORKTREE_DIR = os.path.join(_WORKSPACE, "auto-fix-worktrees")
 _DEFAULT_REPO = os.environ.get("GITHUB_REPOSITORY", "thetime1102/nhatvicake-core")
 
 # Danh sách nhánh auto-fix bi co gioi han (infinite loop guard)
 _AUTO_FIX_PREFIX = "auto-fix/"
 # SQLite DB luu pending fixes (context persistence giua cac webhook)
-_PENDING_DB = os.path.join(_WORKSPACE, "memory", "pending_fixes.db")
+_PENDING_DB = os.path.join(_PENDING_DB_DIR, "pending_fixes.db")
 
 
 # ═══════════════════════════════════════════════════════════════════════════

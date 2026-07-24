@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 """
 pattern_store.py - VERIFIED_PATTERN Learning Engine
 ====================================================
@@ -26,6 +27,8 @@ Sử dụng:
   patterns = store.search_similar("auto post worker crash")
   prompt = store.build_few_shot_examples(patterns)
 """
+
+
 
 import hashlib
 import json
