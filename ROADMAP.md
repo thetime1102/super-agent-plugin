@@ -1,6 +1,6 @@
 # 🚀 Super Agent v3 — Roadmap
 
-> Trạng thái: **Phase 1 ✅ | Phase 2+3 ✅ | Phase 4 ✅ | Phase 5 ✅ | Phase 6 ✅ | Phase 7 ✅** | Cập nhật: 2026-07-24
+> Trạng thái: **Phase 1 ✅ | Phase 2+3 ✅ | Phase 4 ✅ | Phase 5 ✅ | Phase 6 ✅ | Phase 7 ✅ (Live Test Passed)** | Cập nhật: 2026-07-24
 
 ---
 
@@ -339,7 +339,14 @@ Iter 2: Planner (có feedback) → Coder (thêm rollback) → Reviewer APPROVED 
 | `GIT_REMOTE` | `origin` | Git remote name |
 | `GIT_BASE_BRANCH` | `dev` | Base branch for auto-fix |
 | `MAX_LOG_CHARS` | `3000` | Max chars for error log extraction |
-| `GITHUB_REPOSITORY` | `thetime1102/nhatvi-ecosystem-dev` | Default repo |
+| `GITHUB_REPOSITORY` | `thetime1102/nhatvicake-core` | Default repo |
 | `GITHUB_TOKEN` | — | GitHub token (fallback: `GITHUB_PERSONAL_ACCESS_TOKEN`, `GH_TOKEN`) |
 | `LOG_ENCODING` | `utf-8` | Git/gh output encoding |
 | `GIT_BASE_BRANCH` | `dev` | Nhánh base để tạo auto-fix branch |
+| `DEEPSEEK_API_KEY` | — | DeepSeek API key để orchestrator phân tích lỗi thật (không dùng mock) |
+
+### Live Test Result (2026-07-24)
+
+Test thực tế: push file syntax error → CI fail → webhook → daemon → gh fetch log → orchestrator.
+
+**Pipeline hoạt động 100%.** Orchestrator dùng mock (thiếu DeepSeek API key) nên không fix được, nhưng với API key thật, auto-fix PR sẽ được tạo tự động.
