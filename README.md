@@ -227,6 +227,79 @@ Token guard: context < 8000 tokens
 
 ---
 
+## 🚀 Production Deployment (VM2)
+
+### 1. Copy code lên VM2
+
+```bash
+# SSH vao VM2
+ssh -i /path/to/vm2-key.key ubuntu@140.245.84.145
+
+# Clone repo (neu chua co)
+git clone https://github.com/thetime1102/super-agent-plugin.git
+cd super-agent-plugin
+```
+
+### 2. Cai dat GitHub CLI + Set token
+
+```bash
+# Cai gh CLI
+type gh || (sudo apt update && sudo apt install gh -y)
+
+# Set token (doc tu env)
+export GITHUB_PERSONAL_ACCESS_TOKEN="ghp_..."
+```
+
+### 3. Chay script cai dat systemd service (tu dong)
+
+```bash
+sudo ./scripts/setup_webhook_service.sh
+```
+
+Script se tu dong:
+- Phat hien Python, gh CLI
+- Doc GITHUB_PERSONAL_ACCESS_TOKEN tu environment
+- Tao file `/etc/systemd/system/super-agent-webhook.service`
+- Chay `systemctl daemon-reload`, `enable`, `start`
+- In ra huong dan xem log bang `journalctl`
+
+### 4. Kiem tra service
+
+```bash
+# Trang thai
+sudo systemctl status super-agent-webhook.service
+
+# Log live
+sudo journalctl -u super-agent-webhook.service -f --output cat
+
+# Restart
+sudo systemctl restart super-agent-webhook.service
+```
+
+### 5. Cai dat Cloudflare Tunnel (optional)
+
+```bash
+# Cai cloudflared
+sudo apt install cloudflared
+
+# Tao tunnel
+cloudflared tunnel create super-agent
+
+# Chay tunnel -> localhost:11999
+cloudflared tunnel run --url http://localhost:11999
+```
+
+### 6. Them GitHub Webhook
+
+| Field | Value |
+|-------|-------|
+| Payload URL | `https://<tunnel-url>/webhook` |
+| Content type | `application/json` |
+| Secret | Giong `WEBHOOK_SECRET` trong service |
+| Events | `Workflow runs` (send: `completed`) |
+
+---
+
 ## 📂 File Structure
 
 ```
@@ -244,6 +317,7 @@ Token guard: context < 8000 tokens
 ├── ROADMAP.md                        # Phase plan
 ├── README.md                         # This file
 └── scripts/
+    ├── setup_webhook_service.sh      # Systemd service installer (Phase 7)
     ├── webhook_handler.py            # CI/CD Auto-Fix Webhook Bridge (Phase 7)
     └── mcp_test_runner.py            # MCP stdio client test script
 ```
