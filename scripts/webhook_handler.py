@@ -214,7 +214,7 @@ def _log(msg: str, level: str = "INFO") -> None:
 
 def _run_git(cmd: list[str], cwd: str = _PROJECT_DIR, capture: bool = True) -> subprocess.CompletedProcess:
     full_cmd = ["git"] + cmd
-    _log(f"git {' '.join(c if ' ' not in c else shlex.join([c]) for c in cmd)}", "CMD")
+    _log(f"git {' '.join(shlex.quote(c) for c in cmd)}", "CMD")
     result = subprocess.run(
         full_cmd, cwd=cwd, capture_output=capture, text=True,
         encoding=_LOG_ENCODING, errors="replace", timeout=60,
@@ -906,8 +906,8 @@ def create_auto_fix_pr(
         # ── Step 6: Luon dọn dẹp worktree (tranh ton tai nguyen) ────
         _log(f"Cleaning up worktree at {worktree_path_norm}...")
         try:
-            # Switch ve base truoc khi remove worktree
-            _run_git(["checkout", base], cwd=project, capture=False)
+            # Switch ve base truoc khi remove worktree (force de tranh conflict)
+            _run_git(["checkout", "--force", base], cwd=project, capture=False)
         except Exception:
             pass
         try:
