@@ -102,6 +102,24 @@ python scripts/webhook_handler.py --test-event workflow_run --test-conclusion fa
 python scripts/webhook_handler.py --fetch-logs thetime1102/nhatvi-ecosystem-dev 12345
 ```
 
+### 6. Telegram Monitoring Alerts (ChatOps)
+
+Webhook handler tự động gửi alert về Telegram qua Bot API tại 3 thời điểm:
+
+| Alert | Khi nào | Nội dung |
+|-------|---------|----------|
+| 🚨 **Triggered** | Webhook nhận được | Repo, Branch, Run ID, Conclusion |
+| ✅ **Success** | Auto-fix PR tạo thành công | Repo, Branch, PR link, Strategy, Files |
+| ❌ **Failed** | Orchestrator không fix được | Repo, Branch, Run ID, Workflow |
+| 💥 **Crash** | Exception bất ngờ | Repo, Run ID, Error message |
+
+**Yêu cầu:** Set 2 biến môi trường:
+```bash
+export TELEGRAM_BOT_TOKEN="***"
+export TELEGRAM_CHAT_ID="8912215232"
+```
+Sử dụng Python stdlib (`urllib`) — zero dependencies. Bỏ qua an toàn nếu chưa set env.
+
 ---
 
 ## 🏗️ Architecture

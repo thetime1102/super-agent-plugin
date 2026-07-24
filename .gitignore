@@ -28,3 +28,8 @@ temp/
 __pycache__/
 consolidation.db
 *.db
+
+# API Keys (never commit)
+*_key.txt
+*_key.json
+scripts/ds_key.txt
