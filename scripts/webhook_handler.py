@@ -104,6 +104,66 @@ _PENDING_DB = os.path.join(_WORKSPACE, "memory", "pending_fixes.db")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+#  Auto-Setup: ghep PATH + set GH_TOKEN tu dong (khong can env thu cong)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _auto_setup_env():
+    """
+    Tu dong tim gh CLI va set GH_TOKEN khi import module.
+    - Them `gh.exe` vao PATH neu chua co
+    - Set bien moi truong GH_TOKEN tu _get_github_token()
+    """
+    # --- Them gh CLI vao PATH neu chua co ---
+    gh_dirs = [
+        r"C:\Program Files\GitHub CLI",
+        r"C:\Program Files (x86)\GitHub CLI",
+        os.path.expanduser(r"~\AppData\Local\GitHub CLI"),
+        os.path.expanduser(r"~\scoop\shims"),
+    ]
+    found_gh = False
+    for d in gh_dirs:
+        gh_exe = os.path.join(d, "gh.exe")
+        if os.path.isfile(gh_exe):
+            if d not in os.environ.get("PATH", ""):
+                os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
+            found_gh = True
+            break
+
+    # Thu tim bang where.exe neu chua tim thay
+    if not found_gh:
+        try:
+            r = subprocess.run(["where.exe", "gh"], capture_output=True, text=True, timeout=5)
+            if r.returncode == 0 and r.stdout.strip():
+                gh_path = r.stdout.strip().splitlines()[0].strip()
+                gh_dir = os.path.dirname(gh_path)
+                if gh_dir not in os.environ.get("PATH", ""):
+                    os.environ["PATH"] = gh_dir + os.pathsep + os.environ.get("PATH", "")
+                found_gh = True
+        except Exception:
+            pass
+
+    if not found_gh:
+        print("[AutoSetup] gh CLI not found. Install: winget install GitHub.cli", flush=True)
+
+    # --- Tu dong set GH_TOKEN ---
+    token = (
+        os.environ.get("GITHUB_TOKEN", "")
+        or os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN", "")
+        or os.environ.get("GH_TOKEN", "")
+    )
+    if token:
+        os.environ.setdefault("GH_TOKEN", token)
+        os.environ.setdefault("GITHUB_TOKEN", token)
+        print(f"[AutoSetup] GH_TOKEN auto-set: {token[:8]}...", flush=True)
+    else:
+        print("[AutoSetup] No GitHub token found (check GITHUB_PERSONAL_ACCESS_TOKEN)", flush=True)
+
+
+# Chay auto-setup ngay khi module duoc import
+_auto_setup_env()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 #  Error Pattern Regex (Fix #4: Smart Error Extraction)
 # ═══════════════════════════════════════════════════════════════════════════
 
