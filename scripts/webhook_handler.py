@@ -95,7 +95,7 @@ _LOG_ENCODING = os.environ.get("LOG_ENCODING", "utf-8")
 _MAX_LOG_CHARS = int(os.environ.get("MAX_LOG_CHARS", "3000"))
 _PROJECT_DIR = _DEV_DIR
 _WORKTREE_DIR = os.path.join(_WORKSPACE, "auto-fix-worktrees")
-_DEFAULT_REPO = os.environ.get("GITHUB_REPOSITORY", "thetime1102/nhatvi-ecosystem-dev")
+_DEFAULT_REPO = os.environ.get("GITHUB_REPOSITORY", "thetime1102/nhatvicake-core")
 
 # Danh sách nhánh auto-fix bi co gioi han (infinite loop guard)
 _AUTO_FIX_PREFIX = "auto-fix/"
