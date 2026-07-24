@@ -18,8 +18,11 @@ import { search, indexProject, configure as configureEmbedder, getIndexStats } f
  * Resolve project root từ config hoặc auto-detect.
  * Bug #5 fix: không dùng process.cwd() trực tiếp mà scan subdirectories.
  * Bug #7 fix: đọc từ api.pluginConfig.projectRoot.
+ * Bug #9 fix: nhận api object, đọc config động mỗi lần gọi (không cache trong closure).
  */
-function resolveProjectRoot(cfgRoot?: string): string {
+function resolveProjectRoot(api?: any): string {
+  // Đọc config động từ API — không dùng biến capture từ closure
+  const cfgRoot = api?.pluginConfig?.projectRoot as string | undefined;
   if (cfgRoot && existsSync(cfgRoot)) return cfgRoot;
 
   const cwd = process.cwd();
@@ -55,9 +58,8 @@ const entry: any = definePluginEntry({
   description: 'Tree-sitter Repo Mapper + Code Symbol Tool + Context Engine',
 
   register(api) {
-    // Đọc plugin config (Bug #9 fix: resolve per-call, không cache)
+    // Đọc plugin config lần đầu, chỉ dùng embeddingApiKey + logger (không cache cfgProjectRoot)
     const pluginCfg = (api as any).pluginConfig || {};
-    const cfgProjectRoot = pluginCfg.projectRoot as string | undefined;
     const embeddingApiKey = pluginCfg.embeddingApiKey as string | undefined;
     const logger = (api as any).logger;
 
@@ -83,8 +85,8 @@ const entry: any = definePluginEntry({
       async execute(_id: string, params: unknown) {
         const { filePath, symbolName, mode } = params as any;
         try {
-          // Bug #9: resolve projectRoot per-call (không dùng cached value)
-          const rootDir = resolveProjectRoot(cfgProjectRoot);
+          // Bug #9: resolve projectRoot per-call (đọc config động từ API)
+          const rootDir = resolveProjectRoot(api);
           // Bug #8 fix: hỗ trợ cả forward-slash và backslash
           const normalized = filePath.replace(/[\\/]/g, '/');
           const fullPath = normalized.startsWith('/') ? normalized : join(rootDir, normalized);
@@ -130,8 +132,8 @@ const entry: any = definePluginEntry({
         const files = detectFileReferences(lastUserMsg.content);
         if (files.length === 0) return { messages, estimatedTokens: 0 };
 
-        // Bug #9: resolve projectRoot per-call
-        const rootDir = resolveProjectRoot(cfgProjectRoot);
+        // Bug #9: resolve projectRoot per-call (đọc config động từ API)
+        const rootDir = resolveProjectRoot(api);
         const additions: string[] = [];
 
         for (const fileRef of files.slice(0, 1)) {
@@ -196,7 +198,7 @@ const entry: any = definePluginEntry({
       async execute(_id: string, params: unknown) {
         const { query, topK } = params as any;
         try {
-          const rootDir = resolveProjectRoot(cfgProjectRoot);
+          const rootDir = resolveProjectRoot(api);
           const stats = getIndexStats(rootDir);
 
           if (!stats.exists) {

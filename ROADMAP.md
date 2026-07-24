@@ -1,6 +1,6 @@
 # 🚀 Super Agent v3 — Roadmap
 
-> Trạng thái: **Phase 1 ✅ | Phase 2+3 ✅ | Phase 4 ✅ | Phase 5 ✅ | Phase 6 ⏳** | Cập nhật: 2026-07-21
+> Trạng thái: **Phase 1 ✅ | Phase 2+3 ✅ | Phase 4 ✅ | Phase 5 ✅ | Phase 6 ✅ | Phase 7 🚧** | Cập nhật: 2026-07-24
 
 ---
 
@@ -233,20 +233,73 @@ Nếu Fail → lặp lại tối đa 3 lần
 
 ---
 
-## Phase 6: MCP Server (Future ⏳)
+## Phase 6: MCP Server + Multi-Agent Orchestrator ✅ HOÀN THÀNH (2026-07-24)
 
-### Mục tiêu
-Isolated session có thể gọi `super-agent search` và `pattern_store.search` qua MCP thay vì exec shell.
+### 6a. MCP Server
 
-### Ý tưởng
+**File:** `super_agent_mcp.py`
 
-```python
-# super_agent_mcp.py — MCP server wrapping super_agent + pattern_store
-# Session A: "search token budget" → MCP call → result → context
+Expose 2 tools qua MCP stdio transport (dùng FastMCP):
+| Tool | Mô tả |
+|------|-------|
+| `search_memory` | Hybrid (vector + keyword) search trong sqlite-memory code DB |
+| `search_verified_patterns` | Tra cứu VERIFIED_PATTERN từ PatternStore (Jaccard scoring) |
+
+**Cấu hình (claude_desktop_config.json):**
+```json
+{
+  "mcpServers": {
+    "super-agent-memory": {
+      "command": "python",
+      "args": ["C:/.../super_agent_mcp.py"]
+    }
+  }
+}
 ```
 
-### Use cases
+### 6b. Multi-Agent Orchestrator
 
-- Cron job dùng MCP call thay vì exec PowerShell
-- Cross-session memory sharing
-- Agent trong Telegram có thể search memory + patterns
+**File:** `multi_agent_orchestrator.py`
+
+Pipeline tự động: **Planner → Coder → Reviewer** (tối đa 3 iterations).
+
+| Agent | Logic thật |
+|-------|-----------|
+| **PlannerAgent** | `pattern_store.search_similar()` + DeepSeek API → fix_plan JSON |
+| **CoderAgent** | `replace_code_symbol.replace_symbol()` — Tree-sitter AST surgery + .bak backup |
+| **ReviewerAgent** | Đọc .bak vs file đã sửa → DeepSeek side-effect validation (hoặc rule-based) |
+
+**Vòng lặp:**
+```
+Iter 1: Planner → Coder → Reviewer REJECTED (thiếu rollback)
+       ↓ feedback
+Iter 2: Planner (có feedback) → Coder (thêm rollback) → Reviewer APPROVED ✅
+```
+
+**Files:**
+| File | Chức năng |
+|------|-----------|
+| `multi_agent_orchestrator.py` | Orchestrator loop + 3 Agent |
+| `super_agent_mcp.py` | MCP server wrapper |
+
+---
+
+## Phase 7: CI/CD Auto-Fix Pipeline 🚧 (Future)
+
+### Mục tiêu
+Tự động trigger multi-agent orchestrator khi GitHub Actions CI fail → phân tích log → apply fix → push commit → re-run CI.
+
+### Thiết kế
+```
+[CI Fail Webhook]
+  ↓
+webhook_handler.py
+  ↓
+multi_agent_orchestrator.run_orchestrator(fetch_logs())
+  ↓
+Planner → Coder → Reviewer
+  ↓
+Auto-commit + Push
+  ↓
+CI Re-run (max 3 attempts)
+```

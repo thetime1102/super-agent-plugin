@@ -15,11 +15,15 @@
 
 | Tool | File | Chức năng |
 |------|------|-----------|
+| **Tool** | File | Chức năng |
+|---------|------|-----------|
 | **🧠 Pattern Store** | `pattern_store.py` | VERIFIED_PATTERN learning engine: Jaccard scoring, few-shot building, top-N pruning |
 | **🔍 Super Agent** | `super_agent.py` | Auto-indexing engine + Hybrid Search + Pattern Store CLI |
 | **🔬 Code Scanner** | `code-scanner.py` | 3-Layer Proactive Scanner: ESLint → DeepSeek Logic → Graph-RAG |
 | **🩺 Code Surgery** | `replace_code_symbol.py` | Tree-sitter AST code replace (byte-level, dry-run) |
 | **🧠 Auto Consolidate** | `auto-consolidate.py` | Event-driven memory consolidation (git → classify → save) |
+| **🤖 Multi-Agent Orchestrator** | `multi_agent_orchestrator.py` | Pipeline Planner→Coder→Reviewer: tự động fix lỗi bằng PatternStore + Tree-sitter + DeepSeek QA |
+| **🌐 MCP Server** | `super_agent_mcp.py` | MCP over stdio: expose search_memory + search_verified_patterns cho AI Client |
 | **🔒 Safe Push** | `safe-push.ps1` | PowerShell-safe git commit+push wrapper |
 
 ---
@@ -90,14 +94,36 @@ python auto-consolidate.py --source webhook --context code:dev
 ```
 git commit
     ↓ (async, ~420ms)
-code-scanner.py
+code-scanner.py (detect bug → bug_report)
     ↓
 ┌─ Layer 1: ESLint --format json (syntax/style)
 ├─ Layer 2: DeepSeek Chain-of-Thought (logic bugs)
 │   └─ graph_reverse_deps() → Graph-RAG (cross-file)
 ├─ Layer 3: auto-consolidate.py (memory save)
-└─ Report → .scan_report.json → OpenClaw session ping
+└─ Bug Report → multi_agent_orchestrator.py
+       ↓
+  ┌──────────────────────┐
+  │  Multi-Agent Loop    │
+  │  (max 3 iterations)  │
+  │                      │
+  │  PlannerAgent ───────┤ ← pattern_store.search_similar()
+  │       ↓              │    + DeepSeek analysis
+  │  CoderAgent ────────┤ ← replace_code_symbol (Tree-sitter)
+  │       ↓              │    + .bak auto backup
+  │  ReviewerAgent QA ──┤ ← .bak vs current diff
+  │       ↓              │    + DeepSeek side-effect validation
+  │  APPROVED? ──YES──→ Done ✅
+  │  NO → lặp lại với feedback
+  └──────────────────────┘
 ```
+
+### Multi-Agent Loop Detail
+
+| Agent | Input | Output | Engine |
+|-------|-------|--------|--------|
+| **Planner** | bug_report + qa_feedback | fix_plan JSON (strategy, files, symbols) | `pattern_store.search_similar()` + DeepSeek CoT |
+| **Coder** | fix_plan | Sửa file thật + .bak backup | `replace_code_symbol` (Tree-sitter AST) |
+| **Reviewer** | .bak vs file đã sửa | APPROVED / REJECTED + diff | DeepSeek side-effect QA + syntax validation |
 
 ### Graph-RAG Flow
 
@@ -147,14 +173,18 @@ Token guard: context < 8000 tokens
 
 ```
 📁 super-agent-plugin/
-├── super_agent.py            # Auto-indexing engine + Hybrid Search
-├── super-agent.ps1           # PowerShell CLI wrapper
-├── code-scanner.py           # 3-Layer Proactive Scanner (ESLint + CoT + Graph-RAG)
-├── replace_code_symbol.py    # Tree-sitter AST code surgery
-├── auto-consolidate.py       # Event-driven memory consolidation
-├── safe-push.ps1             # PowerShell-safe git push wrapper
-├── ROADMAP.md                # Phase plan
-└── README.md                 # This file
+├── super_agent.py                    # Auto-indexing engine + Hybrid Search
+├── super-agent.ps1                   # PowerShell CLI wrapper
+├── super_agent_mcp.py                # MCP Server (FastMCP, stdio transport)
+├── code-scanner.py                   # 3-Layer Proactive Scanner (ESLint + CoT + Graph-RAG)
+├── multi_agent_orchestrator.py       # Pipeline Planner→Coder→Reviewer (real integration)
+├── mcp_test_runner.py                # MCP stdio client test script
+├── replace_code_symbol.py            # Tree-sitter AST code surgery
+├── pattern_store.py                  # VERIFIED_PATTERN learning engine
+├── auto-consolidate.py               # Event-driven memory consolidation
+├── safe-push.ps1                     # PowerShell-safe git push wrapper
+├── ROADMAP.md                        # Phase plan
+└── README.md                         # This file
 ```
 
 ## 🔗 Related
