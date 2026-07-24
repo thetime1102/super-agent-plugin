@@ -804,11 +804,7 @@ def create_auto_fix_pr(
 
     try:
         # ── Step 2: Create & switch to auto-fix branch trong worktree ──
-        # Xoa branch remote cu neu co (idempotent)
-        _run_git(["branch", "-D", branch_name], capture=False)
-        _run_git(["push", _GIT_REMOTE, "--delete", branch_name], capture=False)
-
-        # Tao branch moi tu base
+        # Tao branch moi tu base (bo qua xoa branch cu vi chua chac ton tai)
         _run_git(["checkout", "-b", branch_name], cwd=worktree_path_norm)
 
         # ── Step 3: git add + commit (trong worktree) ─────────────────
@@ -823,15 +819,7 @@ def create_auto_fix_pr(
                     _run_git(["add", f], cwd=worktree_path_norm)
             _log(f"Staged {len(files)} file(s) from fix plan")
 
-        # Kiem tra co thay doi khong
-        status = _run_git(["status", "--porcelain"], cwd=worktree_path_norm)
-        if not status.stdout.strip():
-            _log("No changes to commit — branch is clean. Skipping PR.", "WARN")
-            return {
-                "pr_url": "", "branch": branch_name,
-                "commit_sha": "", "status": "no_changes",
-                "reason": "No changes detected after fix",
-            }
+        # Attempt commit directly (git status can be race-y in worktrees)
 
         commit_msg = (
             f"auto-fix: {strategy} — {summary[:80]}\n\n"
@@ -852,7 +840,8 @@ def create_auto_fix_pr(
                 commit_sha = _run_git(["rev-parse", "HEAD"], cwd=worktree_path_norm).stdout.strip()
             _log(f"Committed: {commit_sha}")
         else:
-            raise RuntimeError(f"Git commit failed: {result.stderr[:300]}")
+            err = result.stderr[:300] if result.stderr else "(commit rejected)"
+            raise RuntimeError(f"Git commit failed: {err}")
 
         # ── Step 4: Push to remote ───────────────────────────────────
         _log(f"Pushing {branch_name} to {_AUTO_FIX_REMOTE}...")
