@@ -668,11 +668,14 @@ Chi tra ve code, khong co text mo ta.
         response = data["choices"][0]["message"]["content"].strip()
 
         # Extract code from ``` block
-        code_match = re.search(r"```(?:\\w+)?\\n?(.*?)```", response, re.DOTALL)
+        # Handle: ```lang\n{code}\n``` and ```\n{code}\n``` variants
+        code_match = re.search(r"```(?:\w+)?\s*\n(.*?)\n```", response, re.DOTALL)
         if code_match:
             fixed_code = code_match.group(1).strip()
         else:
             fixed_code = response.strip()
+            # Debug: log raw response for diagnosis
+            print(f"    [DeepSeek Fix] No code block found, using raw response")
 
         print(f"    [DeepSeek Fix] Response length: {len(response)} chars")
         print(f"    [DeepSeek Fix] Extracted code length: {len(fixed_code)} chars")
